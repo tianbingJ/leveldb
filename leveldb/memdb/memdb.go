@@ -29,12 +29,15 @@ type dbIter struct {
 	util.BasicReleaser
 	p          *DB
 	slice      *util.Range
+	//位置
 	node       int
+	//是否向前遍历,如果当前是第一个元素，forward = true时，Prev()会返回最后一个元素
 	forward    bool
 	key, value []byte
 	err        error
 }
 
+//填充value
 func (i *dbIter) fill(checkStart, checkLimit bool) bool {
 	if i.node != 0 {
 		n := i.p.nodeData[i.node]
@@ -58,10 +61,13 @@ bail:
 	return false
 }
 
+//node是否指向初始化的位置
 func (i *dbIter) Valid() bool {
 	return i.node != 0
 }
 
+//找到符合区间的第一个位置
+//如果没有指定start，则指向第一个元素
 func (i *dbIter) First() bool {
 	if i.Released() {
 		i.err = ErrIterReleased
@@ -79,6 +85,7 @@ func (i *dbIter) First() bool {
 	return i.fill(false, true)
 }
 
+//找到小于等于range limit的第一个最后一个元素
 func (i *dbIter) Last() bool {
 	if i.Released() {
 		i.err = ErrIterReleased
@@ -96,6 +103,8 @@ func (i *dbIter) Last() bool {
 	return i.fill(true, false)
 }
 
+//如果没有指定区间的start， 找到key定位的位置
+//如果指定区间的start并且key比start小的话，则找到start所在的位置
 func (i *dbIter) Seek(key []byte) bool {
 	if i.Released() {
 		i.err = ErrIterReleased
@@ -127,7 +136,7 @@ func (i *dbIter) Next() bool {
 	i.forward = true
 	i.p.mu.RLock()
 	defer i.p.mu.RUnlock()
-	i.node = i.p.nodeData[i.node+nNext]
+	i.node = i.p.nodeData[i.node+nNext]  //最后一层的下一个属性
 	return i.fill(false, true)
 }
 
@@ -200,6 +209,7 @@ type DB struct {
 
 	//skip list最大高度
 	maxHeight int
+	//Key Value对的个数
 	n         int
 	//key和value的总长度
 	kvSize    int
@@ -215,6 +225,8 @@ func (p *DB) randHeight() (h int) {
 }
 
 // Must hold RW-lock if prev == true, as it use shared prevNode slice.
+//找到大于等于key的第一个节点
+//第一个返回值表示是否正好相等
 func (p *DB) findGE(key []byte, prev bool) (int, bool) {
 	node := 0
 	h := p.maxHeight - 1 //maxHeight是第一个节点的高度
@@ -340,7 +352,9 @@ func (p *DB) Delete(key []byte) error {
 
 	h := p.nodeData[node+nHeight]
 	for i, n := range p.prevNode[:h] {
-		m := n + nNext + i
+		//n表示同一层中node前面的那个节点
+		m := n + nNext + i  //m表示节点n next数组中第i层的索引位置
+		//p.nodeData[m]的值 = node, 这里的意思是让节点n 第i层 指向node的下一个位置
 		p.nodeData[m] = p.nodeData[p.nodeData[m]+nNext+i]
 	}
 
@@ -367,6 +381,7 @@ func (p *DB) Contains(key []byte) bool {
 func (p *DB) Get(key []byte) (value []byte, err error) {
 	p.mu.RLock()
 	if node, exact := p.findGE(key, false); exact {
+		//o表示: kvOffset + keyLength  = valueOffset
 		o := p.nodeData[node] + p.nodeData[node+nKey]
 		value = p.kvData[o : o+p.nodeData[node+nVal]]
 	} else {

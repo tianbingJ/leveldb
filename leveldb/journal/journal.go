@@ -75,6 +75,9 @@
 // The wire format allows for limited recovery in the face of data corruption:
 // on a format error (such as a checksum mismatch), the reader moves to the
 // next block and looks for the next full or first chunk.
+/*
+日志与block、chunk的关系？
+ */
 package journal
 
 import (
@@ -96,7 +99,7 @@ const (
 )
 
 const (
-	blockSize  = 32 * 1024
+	blockSize  = 32 * 1024   //32kb
 	headerSize = 7
 )
 
@@ -127,6 +130,7 @@ type Reader struct {
 	// the dropper.
 	dropper Dropper
 	// strict flag.
+	//是否兼容有损坏的日志
 	strict bool
 	// checksum flag.
 	checksum bool
@@ -134,9 +138,12 @@ type Reader struct {
 	seq int
 	// buf[i:j] is the unread portion of the current chunk's payload.
 	// The low bound, i, excludes the chunk header.
+	//buffer包含header，i、j只对payload
+	//j指向的是一个chunk的最后一个位置
 	i, j int
 	// n is the number of bytes of buf that are valid. Once reading has started,
 	// only the final block can have n < blockSize.
+	// 只有日志中最后一个block能满足 n < blockSize
 	n int
 	// last is whether the current chunk is the last chunk of the journal.
 	last bool
@@ -174,8 +181,13 @@ func (r *Reader) corrupt(n int, reason string, skip bool) error {
 
 // nextChunk sets r.buf[r.i:r.j] to hold the next chunk's payload, reading the
 // next block into the buffer if necessary.
+// 设置Reader的游标，使它指向下一个chunk
 func (r *Reader) nextChunk(first bool) error {
+	//为什么要加个for循环？
+	// nextChuck调用结束之后，希望i、j指向了正确的位置。
+	// for循环末尾读取新的数据之后，设置了r.i, r.j, r.n = 0, 0, n，并没有把i和j设置成希望的结果。
 	for {
+		// 下一个chunk还在当前block
 		if r.j+headerSize <= r.n {
 			checksum := binary.LittleEndian.Uint32(r.buf[r.j+0 : r.j+4])
 			length := binary.LittleEndian.Uint16(r.buf[r.j+4 : r.j+6])
@@ -193,8 +205,8 @@ func (r *Reader) nextChunk(first bool) error {
 				r.j = r.n
 				return r.corrupt(unprocBlock, fmt.Sprintf("invalid chunk type %#x", chunkType), false)
 			}
-			r.i = r.j + headerSize
-			r.j = r.j + headerSize + int(length)
+			r.i = r.j + headerSize //i指向下一个chunk的起始位置
+			r.j = r.j + headerSize + int(length)  //j指向下一个chunk的末尾
 			if r.j > r.n {
 				// Drop entire block.
 				r.i = r.n
@@ -216,8 +228,11 @@ func (r *Reader) nextChunk(first bool) error {
 			return nil
 		}
 
+		//以下是下一个chunk不在当前block的逻辑。
 		// The last block.
+		// r.n < blockSize表示是日志中最后一个block
 		if r.n < blockSize && r.n > 0 {
+			// r.n < blockSize
 			if !first {
 				return r.corrupt(0, "missing chunk part", false)
 			}
@@ -284,6 +299,7 @@ type singleReader struct {
 	err error
 }
 
+//实现Reader接口
 func (x *singleReader) Read(p []byte) (int, error) {
 	r := x.r
 	if r.seq != x.seq {
@@ -357,6 +373,7 @@ type Writer struct {
 	// first is whether the current chunk is the first chunk of the journal.
 	first bool
 	// pending is whether a chunk is buffered but not yet written.
+	// 需要fillHeader
 	pending bool
 	// err is any accumulated error.
 	err error
@@ -374,15 +391,17 @@ func NewWriter(w io.Writer) *Writer {
 }
 
 // fillHeader fills in the header for the pending chunk.
+// 填充当前buf中的header信息, 当前[i, j]被认为是一个完整的chunk,确定了大小，因此可以填充header.
+// last: 是否是最后一个header
 func (w *Writer) fillHeader(last bool) {
 	if w.i+headerSize > w.j || w.j > blockSize {
 		panic("leveldb/journal: bad writer state")
 	}
 	if last {
 		if w.first {
-			w.buf[w.i+6] = fullChunkType
+			w.buf[w.i+6] = fullChunkType  //既是最后一个chunk，也是第一个chunk，因此是fullChunkType
 		} else {
-			w.buf[w.i+6] = lastChunkType
+			w.buf[w.i+6] = lastChunkType  //如果当前不是第一个chunk，则类型是最后一个
 		}
 	} else {
 		if w.first {
@@ -391,12 +410,13 @@ func (w *Writer) fillHeader(last bool) {
 			w.buf[w.i+6] = middleChunkType
 		}
 	}
-	binary.LittleEndian.PutUint32(w.buf[w.i+0:w.i+4], util.NewCRC(w.buf[w.i+6:w.j]).Value())
-	binary.LittleEndian.PutUint16(w.buf[w.i+4:w.i+6], uint16(w.j-w.i-headerSize))
+	binary.LittleEndian.PutUint32(w.buf[w.i+0:w.i+4], util.NewCRC(w.buf[w.i+6:w.j]).Value())  //check sum
+	binary.LittleEndian.PutUint16(w.buf[w.i+4:w.i+6], uint16(w.j-w.i-headerSize))  //length
 }
 
 // writeBlock writes the buffered block to the underlying writer, and reserves
 // space for the next chunk's header.
+// 写入 buffer里的内容到文件，并保留设置header.
 func (w *Writer) writeBlock() {
 	_, w.err = w.w.Write(w.buf[w.written:])
 	w.i = 0

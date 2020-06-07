@@ -24,6 +24,7 @@ type Releaser interface {
 }
 
 // ReleaseSetter is the interface that wraps the basic SetReleaser method.
+// 把资源和Releaser关联起来，资源释放之后需要再次调用SetReleaser把二者关联起来
 type ReleaseSetter interface {
 	// SetReleaser associates the given releaser to the resources. The
 	// releaser will be called once coresponding resources released.
