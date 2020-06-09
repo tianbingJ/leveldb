@@ -39,8 +39,8 @@ var (
 	DefaultOpenFilesCacher               = LRUCacher
 	DefaultOpenFilesCacheCapacity        = 500
 	DefaultWriteBuffer                   = 4 * MiB
-	DefaultWriteL0PauseTrigger           = 12
-	DefaultWriteL0SlowdownTrigger        = 8
+	DefaultWriteL0PauseTrigger           = 12   //暂停写入操作阈值
+	DefaultWriteL0SlowdownTrigger        = 8   //当L0超过8个文件之后会放缓写入速度
 )
 
 // Cacher is a caching algorithm.

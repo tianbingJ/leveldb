@@ -31,9 +31,8 @@ func newErrBatchCorrupted(reason string) error {
 }
 
 const (
-	batchHeaderLen = 8 + 4
+	batchHeaderLen = 8 + 4  //sequence number 和 entry的条数
 	batchGrowRec   = 3000
-	batchBufioSize = 16
 )
 
 // BatchReplay wraps basic batch operations.
@@ -65,7 +64,7 @@ func (index batchIndex) kv(data []byte) (key, value []byte) {
 
 // Batch is a write batch.
 type Batch struct {
-	//数据
+	//数据 是type1 key1 value1  tyep2 key2 value2.... 写在journal中也是按照这个顺序
 	data  []byte
 	//key pos value pos等在byte中的位置
 	index []batchIndex
@@ -76,6 +75,9 @@ type Batch struct {
 	internalLen int
 }
 
+/**
+ 如果剩余容量小于n, 扩容：
+ */
 func (b *Batch) grow(n int) {
 	o := len(b.data)
 	if cap(b.data)-o < n {
@@ -83,6 +85,7 @@ func (b *Batch) grow(n int) {
 		if len(b.index) > batchGrowRec {
 			div = len(b.index) / batchGrowRec
 		}
+		//扩容后的容量 ~= 3000条记录的大小.
 		ndata := make([]byte, o, o+n+o/div)
 		copy(ndata, b.data)
 		b.data = ndata
@@ -90,7 +93,7 @@ func (b *Batch) grow(n int) {
 }
 
 func (b *Batch) appendRec(kt keyType, key, value []byte) {
-	//为什么key和value要加上32位整数的序列号长度，这个整数是什么含义？
+	//为什么key和value要加上32位整数的序列化长度，这个整数是什么含义？
 	//1又是什么？
 	//ans:先与分配最大可能用到的空间，序列化后key的长度和value的长度暂时是不确定的， 1个字节是batch编码中表示操作type的字节。
 	//如果多分配了空间，方法最后通过b.data = data[:o]修正。
@@ -145,6 +148,8 @@ func (b *Batch) Dump() []byte {
 // will be discarded.
 // The given slice will not be copied and will be used as batch buffer, so
 // it is not safe to modify the contents of the slice.
+//使用data作为Batch的Buffer
+//相当于重置当前Batch
 func (b *Batch) Load(data []byte) error {
 	return b.decode(data, -1)
 }
@@ -202,6 +207,10 @@ func (b *Batch) append(p *Batch) {
 	}
 }
 
+/*
+	使用data作为作为当前Batch的data.
+    根据data更新Batch.index
+ */
 func (b *Batch) decode(data []byte, expectedLen int) error {
 	b.data = data
 	b.index = b.index[:0]
@@ -220,6 +229,9 @@ func (b *Batch) decode(data []byte, expectedLen int) error {
 	return nil
 }
 
+/*
+    放入到skip list中
+ */
 func (b *Batch) putMem(seq uint64, mdb *memdb.DB) error {
 	var ik []byte
 	for i, index := range b.index {
@@ -251,6 +263,9 @@ func MakeBatch(n int) *Batch {
 	return &Batch{data: make([]byte, 0, n)}
 }
 
+/*
+	根据data里的数据更新batchIndex
+ */
 func decodeBatch(data []byte, fn func(i int, index batchIndex) error) error {
 	var index batchIndex
 	for i, o := 0, 0; o < len(data); i++ {
@@ -261,7 +276,7 @@ func decodeBatch(data []byte, fn func(i int, index batchIndex) error) error {
 		}
 		o++
 
-		// Key.
+		// Key. n是key的长度
 		x, n := binary.Uvarint(data[o:])
 		o += n
 		if n <= 0 || o+int(x) > len(data) {
@@ -293,6 +308,9 @@ func decodeBatch(data []byte, fn func(i int, index batchIndex) error) error {
 	return nil
 }
 
+/*
+    解析data里的数据,放到内存中
+ */
 func decodeBatchToMem(data []byte, expectSeq uint64, mdb *memdb.DB) (seq uint64, batchLen int, err error) {
 	seq, batchLen, err = decodeBatchHeader(data)
 	if err != nil {
@@ -349,7 +367,11 @@ func batchesLen(batches []*Batch) int {
 	return batchLen
 }
 
+/*
+	header是什么含义
+ */
 func writeBatchesWithHeader(wr io.Writer, batches []*Batch, seq uint64) error {
+	//write header
 	if _, err := wr.Write(encodeBatchHeader(nil, seq, batchesLen(batches))); err != nil {
 		return err
 	}

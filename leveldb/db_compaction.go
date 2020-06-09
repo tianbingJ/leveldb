@@ -711,11 +711,14 @@ func (db *DB) compTrigger(compC chan<- cCmd) {
 }
 
 // This will trigger auto compaction and/or wait for all compaction to be done.
+// 出发compaction命令，并等待压缩返回。
+// 改方法执行完成后，不应该存在frozen mem db
 func (db *DB) compTriggerWait(compC chan<- cCmd) (err error) {
 	ch := make(chan error)
 	defer close(ch)
 	// Send cmd.
 	select {
+	//发送compaction命令，传递错误通知channel
 	case compC <- cAuto{ch}:
 	case err = <-db.compErrC:
 		return

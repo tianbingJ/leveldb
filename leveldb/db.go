@@ -35,7 +35,7 @@ type DB struct {
 	// Stats. Need 64-bit alignment.
 	cWriteDelay            int64 // The cumulative duration of write delays
 	cWriteDelayN           int32 // The cumulative number of write delays
-	inWritePaused          int32 // The indicator whether write operation is paused by compaction
+	inWritePaused          int32 // The indicator whether write operation is paused by compaction = 1，暂停写入
 	aliveSnaps, aliveIters int32
 
 	// Compaction statistic
@@ -53,7 +53,7 @@ type DB struct {
 	mem, frozenMem  *memDB
 	journal         *journal.Writer
 	journalWriter   storage.Writer
-	journalFd       storage.FileDesc
+	journalFd       storage.FileDesc  //frozen journal
 	frozenJournalFd storage.FileDesc
 	frozenSeq       uint64
 
@@ -63,18 +63,21 @@ type DB struct {
 
 	// Write.
 	batchPool    sync.Pool
-	writeMergeC  chan writeMerge
-	writeMergedC chan bool
-	writeLockC   chan struct{} //可以缓存一个对象
-	writeAckC    chan error
-	writeDelay   time.Duration
-	writeDelayN  int
+	writeMergeC  chan writeMerge  //等待merge的数据block在这里
+	writeMergedC chan bool		  //看起来writeMergeC和writeMergedC是配对使用的：X的merge请求的数据被merge之后，会向writeMergedC发通知，X会从writeMergedC读到这个通知
+	//读是释放锁，写是获取锁
+	writeLockC   chan struct{} 	//写锁，可以缓存一个对象  读取是释放锁，写入是获取锁
+	writeAckC    chan error 	//写确认通道，没有error， 传递的是nil
+	writeDelay   time.Duration    //统计连续write delay的累计时间
+	writeDelayN  int			  //统计连续write delay的累计次数
 	tr           *Transaction
 
 	// Compaction.
 	compCommitLk     sync.Mutex
 	tcompCmdC        chan cCmd
 	tcompPauseC      chan chan<- struct{}
+
+	//内存压缩channel
 	mcompCmdC        chan cCmd
 	compErrC         chan error
 	compPerErrC      chan error

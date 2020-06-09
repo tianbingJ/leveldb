@@ -6,6 +6,9 @@
 
 package leveldb
 
+/*
+    控制写入内存、journal核心的逻辑。
+ */
 import (
 	"sync/atomic"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
+//把batch写入Journal中
 func (db *DB) writeJournal(batches []*Batch, seq uint64, sync bool) error {
 	wr, err := db.journal.Next()
 	if err != nil {
@@ -32,6 +36,10 @@ func (db *DB) writeJournal(batches []*Batch, seq uint64, sync bool) error {
 	return nil
 }
 
+/*
+	当前memdb变成frozen mem，分配新的journal
+	当前journal fd变成frozen journal fd
+ */
 func (db *DB) rotateMem(n int, wait bool) (mem *memDB, err error) {
 	retryLimit := 3
 retry:
@@ -63,7 +71,8 @@ retry:
 	return
 }
 
-/**
+/*
+flush确保mdb中至少有n的空间。
  */
 func (db *DB) flush(n int) (mdb *memDB, mdbFree int, err error) {
 	delayed := false
@@ -85,16 +94,19 @@ func (db *DB) flush(n int) (mdb *memDB, mdbFree int, err error) {
 		//level0 tfiles个数
 		tLen := db.s.tLen(0)
 		mdbFree = mdb.Free()
+		//
 		switch {
-		case tLen >= slowdownTrigger && !delayed:
+		case tLen >= slowdownTrigger && !delayed: //如果大于slowdownTrigger，先暂停1ms. 如果已经delayed过了，则不暂停
 			delayed = true
 			time.Sleep(time.Millisecond)
-		case mdbFree >= n:
+		case mdbFree >= n:  //如果mdbFree > n，则表示有足够的空间不需要刷新
 			return false
-		case tLen >= pauseTrigger:
+		case tLen >= pauseTrigger: //大于pause Trigger则停止写入
+
 			delayed = true
 			// Set the write paused flag explicitly.
 			atomic.StoreInt32(&db.inWritePaused, 1)
+			//等待compaction结束
 			err = db.compTriggerWait(db.tcompCmdC)
 			// Unset the write paused flag.
 			atomic.StoreInt32(&db.inWritePaused, 0)
@@ -103,6 +115,7 @@ func (db *DB) flush(n int) (mdb *memDB, mdbFree int, err error) {
 			}
 		default:
 			// Allow memdb to grow if it has no entry.
+			//这里没有看明白，如果当前skipList中没有entry，为什么mdbFree直接 = n？
 			if mdb.Len() == 0 {
 				mdbFree = n
 			} else {
@@ -134,6 +147,7 @@ func (db *DB) flush(n int) (mdb *memDB, mdbFree int, err error) {
 	return
 }
 
+
 type writeMerge struct {
 	sync       bool
 	batch      *Batch
@@ -141,10 +155,14 @@ type writeMerge struct {
 	key, value []byte
 }
 
+/*
+	err可以是nil
+ */
 func (db *DB) unlockWrite(overflow bool, merged int, err error) {
 	for i := 0; i < merged; i++ {
-		db.writeAckC <- err
+		db.writeAckC <- err  //通知写ack， err != nil表示写失败
 	}
+	//溢出，这里需要在看
 	if overflow {
 		// Pass lock to the next write (that failed to merge).
 		db.writeMergedC <- false
@@ -155,9 +173,15 @@ func (db *DB) unlockWrite(overflow bool, merged int, err error) {
 }
 
 // ourBatch is batch that we can modify.
+/*
+	merge: 是否合并其他待写入的数据
+	batch: 要写入的batch,这个batch不能修改
+	outBatch: 可以修改的batch
+ */
 func (db *DB) writeLocked(batch, ourBatch *Batch, merge, sync bool) error {
 	// Try to flush memdb. This method would also trying to throttle writes
 	// if it is too fast and compaction cannot catch-up.
+	//会暂停1ms，或者关闭可写标记
 	mdb, mdbFree, err := db.flush(batch.internalLen)
 	if err != nil {
 		db.unlockWrite(false, 0, err)
@@ -166,21 +190,22 @@ func (db *DB) writeLocked(batch, ourBatch *Batch, merge, sync bool) error {
 	defer mdb.decref()
 
 	var (
-		overflow bool
-		merged   int
+		overflow bool   //over flow表示从writeMergeC里读取的batch是否超过了merge limit
+		merged   int   //merge的数量
 		batches  = []*Batch{batch}
 	)
 
 	if merge {
 		// Merge limit. 128 << 10 = 128KB
-		//merge limit表示一次merge的容量限制.
-		var mergeLimit int
+		// 1 << 20 = 1MB
+		//merge limit表示可以merge其他等待写入数据的容量限制.
+		var mergeLimit int  //merge limit表示可以merge的容量
 		if batch.internalLen > 128<<10 {
 			mergeLimit = (1 << 20) - batch.internalLen
 		} else {
 			mergeLimit = 128 << 10
 		}
-		mergeCap := mdbFree - batch.internalLen
+		mergeCap := mdbFree - batch.internalLen  //内存中写入batch后剩余的容量
 		if mergeLimit > mergeCap {
 			mergeLimit = mergeCap
 		}
@@ -234,7 +259,7 @@ func (db *DB) writeLocked(batch, ourBatch *Batch, merge, sync bool) error {
 
 	// Write journal.
 	if err := db.writeJournal(batches, seq, sync); err != nil {
-		db.unlockWrite(overflow, merged, err)
+		db.unlockWrite(overflow, merged, err)  //写入失败，通知
 		return err
 	}
 
