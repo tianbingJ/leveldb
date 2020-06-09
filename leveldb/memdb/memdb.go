@@ -195,6 +195,7 @@ type DB struct {
 	mu     sync.RWMutex
 
 	// 不使用链表的方式，key value都放在kvData数组中
+	//默认值4MB
 	kvData []byte
 	// Node data:
 	// [0]         : KV offset

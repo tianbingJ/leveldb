@@ -49,6 +49,7 @@ type DB struct {
 
 	// MemDB.
 	memMu           sync.RWMutex
+	// mem pool
 	memPool         chan *memdb.DB
 	mem, frozenMem  *memDB
 	journal         *journal.Writer
@@ -74,6 +75,7 @@ type DB struct {
 
 	// Compaction.
 	compCommitLk     sync.Mutex
+	//TB:table compaction chan
 	tcompCmdC        chan cCmd
 	tcompPauseC      chan chan<- struct{}
 
@@ -82,7 +84,7 @@ type DB struct {
 	compErrC         chan error
 	compPerErrC      chan error
 	compErrSetC      chan error
-	compWriteLocking bool
+	compWriteLocking bool  //只读，锁定写
 	compStats        cStats
 	memdbMaxLevel    int // For testing.
 

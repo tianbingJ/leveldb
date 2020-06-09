@@ -174,6 +174,7 @@ func (db *DB) unlockWrite(overflow bool, merged int, err error) {
 
 // ourBatch is batch that we can modify.
 /*
+	调用这个方法需要保证已经获取到锁
 	merge: 是否合并其他待写入的数据
 	batch: 要写入的batch,这个batch不能修改
 	outBatch: 可以修改的batch
@@ -298,6 +299,7 @@ func (db *DB) Write(batch *Batch, wo *opt.WriteOptions) error {
 	// If the batch size is larger than write buffer, it may justified to write
 	// using transaction instead. Using transaction the batch will be written
 	// into tables directly, skipping the journaling.
+	// 事务这里先跳过，回头再看
 	if batch.internalLen > db.s.o.GetWriteBuffer() && !db.s.o.GetDisableLargeBatchTransaction() {
 		tr, err := db.OpenTransaction()
 		if err != nil {
@@ -315,17 +317,23 @@ func (db *DB) Write(batch *Batch, wo *opt.WriteOptions) error {
 
 	// Acquire write lock.
 	if merge {
+		/*
+		1.如果获取到锁，后面调用writeLocked独占写
+		2.否则写writeMergeC表示被merge writeMergedC返回true 表示merge成功
+		3.compPerErrC 表示失败
+		 */
 		select {
+		// merge
 		case db.writeMergeC <- writeMerge{sync: sync, batch: batch}:
 			if <-db.writeMergedC {
 				// Write is merged.
 				return <-db.writeAckC
 			}
-			// Write is not merged, the write lock is handed to us. Continue.
+		// Write is not merged, the write lock is handed to us. Continue.
+		//获取到锁, 后面进行
 		case db.writeLockC <- struct{}{}:
-			// Write lock acquired.
+		// Compaction error.
 		case err := <-db.compPerErrC:
-			// Compaction error.
 			return err
 		case <-db.closeC:
 			// Closed
@@ -333,10 +341,10 @@ func (db *DB) Write(batch *Batch, wo *opt.WriteOptions) error {
 		}
 	} else {
 		select {
+		// Write lock acquired.
 		case db.writeLockC <- struct{}{}:
-			// Write lock acquired.
+		// Compaction error.
 		case err := <-db.compPerErrC:
-			// Compaction error.
 			return err
 		case <-db.closeC:
 			// Closed
@@ -411,6 +419,9 @@ func (db *DB) Delete(key []byte, wo *opt.WriteOptions) error {
 	return db.putRec(keyTypeDel, key, nil, wo)
 }
 
+/*
+判断mem 是否与min，max相交
+ */
 func isMemOverlaps(icmp *iComparer, mem *memdb.DB, min, max []byte) bool {
 	iter := mem.NewIterator(nil)
 	defer iter.Release()
@@ -427,6 +438,10 @@ func isMemOverlaps(icmp *iComparer, mem *memdb.DB, min, max []byte) bool {
 // A nil Range.Start is treated as a key before all keys in the DB.
 // And a nil Range.Limit is treated as a key after all keys in the DB.
 // Therefore if both is nil then it will compact entire DB.
+/*
+压缩给定key范围的数据
+删除或者被覆盖的版本会被删除.
+ */
 func (db *DB) CompactRange(r util.Range) error {
 	if err := db.ok(); err != nil {
 		return err

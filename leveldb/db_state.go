@@ -37,6 +37,7 @@ func (m *memDB) incref() {
 func (m *memDB) decref() {
 	if ref := atomic.AddInt32(&m.ref, -1); ref == 0 {
 		// Only put back memdb with std capacity.
+		//只把标准大小的memdb 放到pool里面
 		if m.Capacity() == m.db.s.o.GetWriteBuffer() {
 			m.Reset()
 			m.db.mpoolPut(m.DB)
