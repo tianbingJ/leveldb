@@ -39,11 +39,13 @@ func (t *tFile) before(icmp *iComparer, ukey []byte) bool {
 }
 
 // Returns true if given key range overlaps with this table key range.
+//判断用户key与tFile是否有交集
 func (t *tFile) overlaps(icmp *iComparer, umin, umax []byte) bool {
 	return !t.after(icmp, umin) && !t.before(icmp, umax)
 }
 
 // Cosumes one seek and return current seeks left.
+// 消费seekLeft
 func (t *tFile) consumeSeek() int32 {
 	return atomic.AddInt32(&t.seekLeft, -1)
 }
@@ -57,6 +59,7 @@ func newTableFile(fd storage.FileDesc, size int64, imin, imax internalKey) *tFil
 		imax: imax,
 	}
 
+	//一次查找等价16kb的压缩，查找次数足够多之后，开始压缩
 	// We arrange to automatically compact this file after
 	// a certain number of seeks.  Let's assume:
 	//   (1) One seek costs 10ms
@@ -88,6 +91,7 @@ type tFiles []*tFile
 func (tf tFiles) Len() int      { return len(tf) }
 func (tf tFiles) Swap(i, j int) { tf[i], tf[j] = tf[j], tf[i] }
 
+//转成string
 func (tf tFiles) nums() string {
 	x := "[ "
 	for i, f := range tf {
@@ -113,6 +117,7 @@ func (tf tFiles) lessByKey(icmp *iComparer, i, j int) bool {
 
 // Returns true if i file number is greater than j.
 // This used for sort by file number in descending order.
+// 为什么不是小于而是大于？
 func (tf tFiles) lessByNum(i, j int) bool {
 	return tf[i].fd.Num > tf[j].fd.Num
 }
@@ -137,6 +142,7 @@ func (tf tFiles) size() (sum int64) {
 
 // Searches smallest index of tables whose its smallest
 // key is after or equal with given key.
+// 查找tFiles里最小key大于internalKey里的tFile
 func (tf tFiles) searchMin(icmp *iComparer, ikey internalKey) int {
 	return sort.Search(len(tf), func(i int) bool {
 		return icmp.Compare(tf[i].imin, ikey) >= 0
@@ -145,6 +151,7 @@ func (tf tFiles) searchMin(icmp *iComparer, ikey internalKey) int {
 
 // Searches smallest index of tables whose its largest
 // key is after or equal with given key.
+// 查找tfiles里最大key大于internakKey的tFile
 func (tf tFiles) searchMax(icmp *iComparer, ikey internalKey) int {
 	return sort.Search(len(tf), func(i int) bool {
 		return icmp.Compare(tf[i].imax, ikey) >= 0
@@ -177,6 +184,7 @@ func (tf tFiles) searchMaxUkey(icmp *iComparer, umax []byte) int {
 
 // Returns true if given key range overlaps with one or more
 // tables key range. If unsorted is true then binary search will not be used.
+// 是否有覆盖:
 func (tf tFiles) overlaps(icmp *iComparer, umin, umax []byte, unsorted bool) bool {
 	if unsorted {
 		// Check against all files.

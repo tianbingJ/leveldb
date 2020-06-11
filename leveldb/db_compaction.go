@@ -63,6 +63,9 @@ type cStats struct {
 	stats []cStat
 }
 
+/*
+统计指标更新到level层
+ */
 func (p *cStats) addStat(level int, n *cStatStaging) {
 	p.lk.Lock()
 	if level >= len(p.stats) {
@@ -83,6 +86,10 @@ func (p *cStats) getStat(level int) (duration time.Duration, read, write int64) 
 	return
 }
 
+
+/*
+这个方法没看明白
+ */
 func (db *DB) compactionError() {
 	var err error
 noerr:
@@ -143,6 +150,9 @@ func (cnt *compactionTransactCounter) incr() {
 	*cnt++
 }
 
+/*
+compaction 接口
+ */
 type compactionTransactInterface interface {
 	run(cnt *compactionTransactCounter) error
 	revert() error
@@ -265,6 +275,9 @@ func (db *DB) compactionCommit(name string, rec *sessionRecord) {
 	}, nil)
 }
 
+/*
+内存压缩
+ */
 func (db *DB) memCompaction() {
 	mdb := db.getFrozenMem()
 	if mdb == nil {
@@ -302,6 +315,7 @@ func (db *DB) memCompaction() {
 	// Generate tables.
 	db.compactionTransactFunc("memdb@flush", func(cnt *compactionTransactCounter) (err error) {
 		stats.startTimer()
+		//
 		flushLevel, err = db.s.flushMemdb(rec, mdb.DB, db.memdbMaxLevel)
 		stats.stopTimer()
 		return
@@ -320,6 +334,7 @@ func (db *DB) memCompaction() {
 
 	// Commit.
 	stats.startTimer()
+	//确定提交compaction
 	db.compactionCommit("memdb", rec)
 	stats.stopTimer()
 

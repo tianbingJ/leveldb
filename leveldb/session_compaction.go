@@ -27,6 +27,9 @@ func (s *session) pickMemdbLevel(umin, umax []byte, maxLevel int) int {
 	return v.pickMemdbLevel(umin, umax, maxLevel)
 }
 
+/*
+刷新memdb
+*/
 func (s *session) flushMemdb(rec *sessionRecord, mdb *memdb.DB, maxLevel int) (int, error) {
 	// Create sorted table.
 	iter := mdb.NewIterator(nil)

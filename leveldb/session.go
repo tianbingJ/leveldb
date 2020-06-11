@@ -42,6 +42,7 @@ type session struct {
 	stTempFileNum    int64
 	stSeqNum         uint64 // last mem compacted seq; need external synchronization
 
+	//
 	stor     *iStorage
 	storLock storage.Locker
 	o        *cachedOptions

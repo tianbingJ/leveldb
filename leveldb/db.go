@@ -73,10 +73,11 @@ type DB struct {
 	writeDelayN  int			  //统计连续write delay的累计次数
 	tr           *Transaction
 
-	// Compaction.
+	// Compaction. 锁
 	compCommitLk     sync.Mutex
 	//TB:table compaction chan
 	tcompCmdC        chan cCmd
+	//传递的是channal
 	tcompPauseC      chan chan<- struct{}
 
 	//内存压缩channel
