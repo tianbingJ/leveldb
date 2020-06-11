@@ -168,6 +168,7 @@ func (tf tFiles) searchNumLess(num int64) int {
 
 // Searches smallest index of tables whose its smallest
 // key is after the given key.
+// 二分查找
 func (tf tFiles) searchMinUkey(icmp *iComparer, umin []byte) int {
 	return sort.Search(len(tf), func(i int) bool {
 		return icmp.ucmp.Compare(tf[i].imin.ukey(), umin) > 0
@@ -213,6 +214,11 @@ func (tf tFiles) overlaps(icmp *iComparer, umin, umax []byte, unsorted bool) boo
 // If overlapped is true then the search will be restarted if umax
 // expanded.
 // The dst content will be overwritten.
+// 1.非0层没有重叠，使用二分查找在tFiles里查找 (overlapped = false)
+// 使用二分查找找到所有相交的区间。
+// 2.0层有重叠，需要一个一个遍历(overlapped == true)
+// 不断用相交的区间扩充当前区间，返回的区间集合。 比如：umin, max = [3, 5], tf = [1, 4], [4, 7], [6,9]
+// 结果会返回 [1, 4], [4, 7], [6,9]，即使[6,9]与[3,5]并没有直接的交集
 func (tf tFiles) getOverlaps(dst tFiles, icmp *iComparer, umin, umax []byte, overlapped bool) tFiles {
 	// Short circuit if tf is empty
 	if len(tf) == 0 {
@@ -258,17 +264,19 @@ func (tf tFiles) getOverlaps(dst tFiles, icmp *iComparer, umin, umax []byte, ove
 		return dst
 	}
 
+	//overlapped is true, level = 0
 	dst = dst[:0]
 	for i := 0; i < len(tf); {
 		t := tf[i]
 		if t.overlaps(icmp, umin, umax) {
+			//以下两个会expand [umin, umax]的大小，但不会让i递增。
 			if umin != nil && icmp.uCompare(t.imin.ukey(), umin) < 0 {
-				umin = t.imin.ukey()
+				umin = t.imin.ukey() //left expand umin
 				dst = dst[:0]
 				i = 0
 				continue
 			} else if umax != nil && icmp.uCompare(t.imax.ukey(), umax) > 0 {
-				umax = t.imax.ukey()
+				umax = t.imax.ukey()  //right expand umax
 				// Restart search if it is overlapped.
 				dst = dst[:0]
 				i = 0
@@ -302,6 +310,7 @@ func (tf tFiles) getRange(icmp *iComparer) (imin, imax internalKey) {
 }
 
 // Creates iterator index from tables.
+// 仅看slice.Range中的内容
 func (tf tFiles) newIndexIterator(tops *tOps, icmp *iComparer, slice *util.Range, ro *opt.ReadOptions) iterator.IteratorIndexer {
 	if slice != nil {
 		var start, limit int
@@ -350,6 +359,7 @@ type tFilesSortByKey struct {
 	icmp *iComparer
 }
 
+//比较最小值
 func (x *tFilesSortByKey) Less(i, j int) bool {
 	return x.lessByKey(x.icmp, i, j)
 }
@@ -359,6 +369,7 @@ type tFilesSortByNum struct {
 	tFiles
 }
 
+//比较number从大到小
 func (x *tFilesSortByNum) Less(i, j int) bool {
 	return x.lessByNum(i, j)
 }
@@ -419,6 +430,7 @@ func (t *tOps) createFrom(src iterator.Iterator) (f *tFile, n int, err error) {
 
 // Opens table. It returns a cache handle, which should
 // be released after use.
+// TODO 缓存没看，这里先跳过
 func (t *tOps) open(f *tFile) (ch *cache.Handle, err error) {
 	ch = t.cache.Get(0, uint64(f.fd.Num), func() (size int, value cache.Value) {
 		var r storage.Reader
@@ -555,6 +567,7 @@ type tWriter struct {
 	w  storage.Writer
 	tw *table.Writer
 
+	//first last是什么含义？
 	first, last []byte
 }
 
@@ -581,6 +594,7 @@ func (w *tWriter) close() {
 }
 
 // Finalizes the table and returns table file.
+//
 func (w *tWriter) finish() (f *tFile, err error) {
 	defer w.close()
 	err = w.tw.Close()
