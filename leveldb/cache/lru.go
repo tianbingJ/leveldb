@@ -14,11 +14,12 @@ import (
 type lruNode struct {
 	n   *Node
 	h   *Handle
-	ban bool
+	ban bool  //从链表中删除
 
 	next, prev *lruNode
 }
 
+//at 插入在node n前面
 func (n *lruNode) insert(at *lruNode) {
 	x := at.next
 	at.next = n
@@ -27,6 +28,7 @@ func (n *lruNode) insert(at *lruNode) {
 	x.prev = n
 }
 
+//移除node n
 func (n *lruNode) remove() {
 	if n.prev != nil {
 		n.prev.next = n.next
@@ -57,6 +59,7 @@ func (r *lru) Capacity() int {
 	return r.capacity
 }
 
+//设置容量, 从lru list后面删除更旧的数据
 func (r *lru) SetCapacity(capacity int) {
 	var evicted []*lruNode
 
@@ -79,11 +82,14 @@ func (r *lru) SetCapacity(capacity int) {
 	}
 }
 
+//TODO 这里没有看明白, 看完cache之后再看
+//为什么CacheData会是LruNode? Node中有额外的空间存储数据，CacheData用于lru中的节点
+//将Node提升为链表的头部
 func (r *lru) Promote(n *Node) {
 	var evicted []*lruNode
 
 	r.mu.Lock()
-	if n.CacheData == nil {
+	if n.CacheData == nil { //表示之前没有在LRU链表之中
 		if n.Size() <= r.capacity {
 			rn := &lruNode{n: n, h: n.GetHandle()}
 			rn.insert(&r.recent)
@@ -102,6 +108,7 @@ func (r *lru) Promote(n *Node) {
 			}
 		}
 	} else {
+		//插入到链表头部
 		rn := (*lruNode)(n.CacheData)
 		if !rn.ban {
 			rn.remove()
