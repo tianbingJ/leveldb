@@ -65,16 +65,18 @@ func (g *NamespaceGetter) Get(key uint64, setFunc func() (size int, value Value)
 
 const (
 	mInitialSize           = 1 << 4
-	mOverflowThreshold     = 1 << 5
-	mOverflowGrowThreshold = 1 << 7
+	mOverflowThreshold     = 1 << 5  //某一个桶的元素过多
+	mOverflowGrowThreshold = 1 << 7   //总节点个数
 )
 
+//桶
 type mBucket struct {
 	mu     sync.Mutex
-	node   []*Node
+	node   []*Node //桶用列表表示？
 	frozen bool
 }
 
+//冻结桶，之后不可变更
 func (b *mBucket) freeze() []*Node {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -84,6 +86,16 @@ func (b *mBucket) freeze() []*Node {
 	return b.node
 }
 
+//bucket和Cache的关系？
+/*
+	r:
+	h:
+	hash:
+	ns:
+	key:
+	noset:
+	hash，ns，key都相同时认为找到了node
+ */
 func (b *mBucket) get(r *Cache, h *mNode, hash uint32, ns, key uint64, noset bool) (done, added bool, n *Node) {
 	b.mu.Lock()
 
@@ -101,6 +113,7 @@ func (b *mBucket) get(r *Cache, h *mNode, hash uint32, ns, key uint64, noset boo
 		}
 	}
 
+	//当前bucket中不存在node
 	// Get only.
 	if noset {
 		b.mu.Unlock()
@@ -121,14 +134,16 @@ func (b *mBucket) get(r *Cache, h *mNode, hash uint32, ns, key uint64, noset boo
 	b.mu.Unlock()
 
 	// Update counter.
+	//r.nodes >= h.growThreshold ||
 	grow := atomic.AddInt32(&r.nodes, 1) >= h.growThreshold
 	if bLen > mOverflowThreshold {
 		grow = grow || atomic.AddInt32(&h.overflow, 1) >= mOverflowGrowThreshold
 	}
 
 	// Grow.
+	// 这里失败，说明由其他线程一定成功了
 	if grow && atomic.CompareAndSwapInt32(&h.resizeInProgess, 0, 1) {
-		nhLen := len(h.buckets) << 1
+		nhLen := len(h.buckets) << 1 //new hash 容量
 		nh := &mNode{
 			buckets:         make([]unsafe.Pointer, nhLen),
 			mask:            uint32(nhLen) - 1,
@@ -216,15 +231,19 @@ func (b *mBucket) delete(r *Cache, h *mNode, hash uint32, ns, key uint64) (done,
 	return true, deleted
 }
 
+/*
+hash表结构
+ */
 type mNode struct {
+	//hash表的数量
 	buckets         []unsafe.Pointer // []*mBucket
 	mask            uint32
 	pred            unsafe.Pointer // *mNode
-	resizeInProgess int32
+	resizeInProgess int32          //1表示正在处于resize中
 
 	overflow        int32
-	growThreshold   int32
-	shrinkThreshold int32
+	growThreshold   int32		   //容量大于len(buckets) * mOverflowThreshold时开始grow
+	shrinkThreshold int32          //buckets容量的一般，即元素个数少于buckets数量一般的时候开始shrink
 }
 
 func (n *mNode) initBucket(i uint32) *mBucket {
@@ -277,6 +296,9 @@ func (n *mNode) initBucket(i uint32) *mBucket {
 	return (*mBucket)(atomic.LoadPointer(&n.buckets[i]))
 }
 
+/*
+初始化 buckets
+ */
 func (n *mNode) initBuckets() {
 	for i := range n.buckets {
 		n.initBucket(uint32(i))
@@ -287,7 +309,7 @@ func (n *mNode) initBuckets() {
 // Cache is a 'cache map'.
 type Cache struct {
 	mu     sync.RWMutex
-	mHead  unsafe.Pointer // *mNode
+	mHead  unsafe.Pointer // *mNode,指向当前的hash表
 	nodes  int32
 	size   int32
 	cacher Cacher
@@ -364,6 +386,7 @@ func (r *Cache) SetCapacity(capacity int) {
 //
 // The returned 'cache handle' should be released after use by calling Release
 // method.
+// 根据namespace和key获取cache node，如果node不存在并且setFunc不是nil，则会调用setFunc创建这个node
 func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Handle {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
