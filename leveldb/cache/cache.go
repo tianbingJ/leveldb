@@ -76,7 +76,7 @@ type mBucket struct {
 	frozen bool
 }
 
-//冻结桶，之后不可变更
+//冻结桶，之后不可变更.返回桶里的元素
 func (b *mBucket) freeze() []*Node {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -206,6 +206,7 @@ func (b *mBucket) delete(r *Cache, h *mNode, hash uint32, ns, key uint64) (done,
 		// Update counter.
 		atomic.AddInt32(&r.size, int32(n.size)*-1)
 		shrink := atomic.AddInt32(&r.nodes, -1) < h.shrinkThreshold
+		//更新溢出节点的数量
 		if bLen >= mOverflowThreshold {
 			atomic.AddInt32(&h.overflow, -1)
 		}
@@ -241,16 +242,19 @@ type mNode struct {
 	pred            unsafe.Pointer // *mNode
 	resizeInProgess int32          //1表示正在处于resize中
 
-	overflow        int32
+	overflow        int32          //overflow表示Sum(len(buckets[i]) - mOverflowThreshold),即所有bucket里超出mOverflowThreshold的数量
 	growThreshold   int32		   //容量大于len(buckets) * mOverflowThreshold时开始grow
 	shrinkThreshold int32          //buckets容量的一般，即元素个数少于buckets数量一般的时候开始shrink
 }
 
+// 返回初始化后的bucket
 func (n *mNode) initBucket(i uint32) *mBucket {
+
 	if b := (*mBucket)(atomic.LoadPointer(&n.buckets[i])); b != nil {
 		return b
 	}
 
+	//pred
 	p := (*mNode)(atomic.LoadPointer(&n.pred))
 	if p != nil {
 		var node []*Node
@@ -292,7 +296,7 @@ func (n *mNode) initBucket(i uint32) *mBucket {
 			return b
 		}
 	}
-
+	//pred == nil
 	return (*mBucket)(atomic.LoadPointer(&n.buckets[i]))
 }
 
@@ -310,8 +314,9 @@ func (n *mNode) initBuckets() {
 type Cache struct {
 	mu     sync.RWMutex
 	mHead  unsafe.Pointer // *mNode,指向当前的hash表
-	nodes  int32
-	size   int32
+	nodes  int32   //节点的个数
+	size   int32   //hash表中Node数据的大小
+	//LRU?
 	cacher Cacher
 	closed bool
 }
@@ -325,6 +330,7 @@ func NewCache(cacher Cacher) *Cache {
 		growThreshold:   int32(mInitialSize * mOverflowThreshold),
 		shrinkThreshold: 0,
 	}
+	//初始化buckets非空
 	for i := range h.buckets {
 		h.buckets[i] = unsafe.Pointer(&mBucket{})
 	}
@@ -335,6 +341,7 @@ func NewCache(cacher Cacher) *Cache {
 	return r
 }
 
+//bucket will not change
 func (r *Cache) getBucket(hash uint32) (*mNode, *mBucket) {
 	h := (*mNode)(atomic.LoadPointer(&r.mHead))
 	i := hash & h.mask
@@ -397,6 +404,7 @@ func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Han
 	hash := murmur32(ns, key, 0xf00)
 	for {
 		h, b := r.getBucket(hash)
+		//setFunc != nil则会创建这个节点
 		done, _, n := b.get(r, h, hash, ns, key, setFunc == nil)
 		if done {
 			if n != nil {
@@ -418,6 +426,7 @@ func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Han
 					atomic.AddInt32(&r.size, int32(n.size))
 				}
 				n.mu.Unlock()
+				//这里为什么？
 				if r.cacher != nil {
 					r.cacher.Promote(n)
 				}
@@ -439,6 +448,7 @@ func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Han
 // doesn't exist or once the 'cache node' is released.
 //
 // Delete return true is such 'cache node' exist.
+//
 func (r *Cache) Delete(ns, key uint64, onDel func()) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -479,6 +489,7 @@ func (r *Cache) Delete(ns, key uint64, onDel func()) bool {
 // simply call Cacher.Evict.
 //
 // Evict return true is such 'cache node' exist.
+// 从Cacher中Evict node，但不从Hash表中删除节点信息
 func (r *Cache) Evict(ns, key uint64) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -605,6 +616,7 @@ type Node struct {
 	ref   int32
 	onDel []func()
 
+	//Node在Hash表中，这里是个指向LRU链表的指针
 	CacheData unsafe.Pointer
 }
 
