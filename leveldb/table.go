@@ -531,7 +531,9 @@ func (t *tOps) close() {
 // Creates new initialized table ops instance.
 func newTableOps(s *session) *tOps {
 	var (
+		//缓存打开的sstable文件句柄以及元数据
 		cacher cache.Cacher
+		//缓存读过sstable里的dataBlock
 		bcache *cache.Cache
 		bpool  *util.BufferPool
 	)

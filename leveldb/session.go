@@ -61,6 +61,8 @@ type session struct {
 	deltaCh     chan *vDelta
 	abandon     chan int64
 	closeC      chan struct{}
+
+	//session close里会wait
 	closeW      sync.WaitGroup
 	vmu         sync.Mutex
 
@@ -127,6 +129,7 @@ func (s *session) create() error {
 }
 
 // Recover a database session; need external synchronization.
+// 恢复database
 func (s *session) recover() (err error) {
 	defer func() {
 		if os.IsNotExist(err) {
@@ -138,7 +141,7 @@ func (s *session) recover() (err error) {
 		}
 	}()
 
-	fd, err := s.stor.GetMeta()
+	fd, err := s.stor.GetMeta()  //找到MANIFEST文件的FD
 	if err != nil {
 		return
 	}

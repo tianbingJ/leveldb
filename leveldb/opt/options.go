@@ -37,7 +37,7 @@ var (
 	DefaultCompressionType               = SnappyCompression
 	DefaultIteratorSamplingRate          = 1 * MiB
 	DefaultOpenFilesCacher               = LRUCacher
-	DefaultOpenFilesCacheCapacity        = 500
+	DefaultOpenFilesCacheCapacity        = 500    //缓存文件上限500个
 	DefaultWriteBuffer                   = 4 * MiB    //mem db size
 	DefaultWriteL0PauseTrigger           = 12   //暂停写入操作阈值
 	DefaultWriteL0SlowdownTrigger        = 8   //当L0超过8个文件之后会放缓写入速度

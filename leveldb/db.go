@@ -93,6 +93,7 @@ type DB struct {
 	closeW sync.WaitGroup
 	closeC chan struct{}
 	closed uint32
+	//OpenFILE()时返回的"LOG"文件
 	closer io.Closer
 }
 
@@ -103,7 +104,7 @@ func openDB(s *session) (*DB, error) {
 		s: s,
 		// Initial sequence
 		seq: s.stSeqNum,
-		// MemDB
+		// MemDB 为什么要用1个缓冲区的channel?
 		memPool: make(chan *memdb.DB, 1),
 		// Snapshot
 		snapsList: list.New(),
@@ -223,11 +224,14 @@ func Open(stor storage.Storage, o *opt.Options) (db *DB, err error) {
 //
 // The returned DB instance is safe for concurrent use.
 // The DB must be closed after use, by calling Close method.
+// 可以并发使用
 func OpenFile(path string, o *opt.Options) (db *DB, err error) {
+	//返回"LOG"文件的fileStorage
 	stor, err := storage.OpenFile(path, o.GetReadOnly())
 	if err != nil {
 		return
 	}
+	//open DB
 	db, err = Open(stor, o)
 	if err != nil {
 		stor.Close()

@@ -188,6 +188,7 @@ const (
 )
 
 // DB is an in-memory key/value database.
+// skip List
 type DB struct {
 	cmp comparer.BasicComparer
 	rnd *rand.Rand

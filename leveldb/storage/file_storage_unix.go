@@ -31,6 +31,7 @@ func newFileLock(path string, readOnly bool) (fl fileLock, err error) {
 	} else {
 		flag = os.O_RDWR
 	}
+	//创建lock文件
 	f, err := os.OpenFile(path, flag, 0)
 	if os.IsNotExist(err) {
 		f, err = os.OpenFile(path, flag|os.O_CREATE, 0644)
@@ -56,6 +57,7 @@ func setFileLock(f *os.File, readOnly, lock bool) error {
 			how = syscall.LOCK_EX
 		}
 	}
+	//Lock_NB发现锁被其他进程锁住之后，会报错
 	return syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
 }
 

@@ -72,6 +72,7 @@ const logSizeThreshold = 1024 * 1024 // 1 MiB
 
 // fileStorage is a file-system backed storage.
 type fileStorage struct {
+	//file 存储目录
 	path     string
 	readOnly bool
 
@@ -93,10 +94,12 @@ type fileStorage struct {
 // The storage must be closed after use, by calling Close method.
 func OpenFile(path string, readOnly bool) (Storage, error) {
 	if fi, err := os.Stat(path); err == nil {
+		//存在但不是目录
 		if !fi.IsDir() {
 			return nil, fmt.Errorf("leveldb/storage: open %s: not a directory", path)
 		}
 	} else if os.IsNotExist(err) && !readOnly {
+		//不存在，则创建
 		if err := os.MkdirAll(path, 0755); err != nil {
 			return nil, err
 		}
@@ -116,7 +119,7 @@ func OpenFile(path string, readOnly bool) (Storage, error) {
 	}()
 
 	var (
-		logw    *os.File
+		logw    *os.File //log file
 		logSize int64
 	)
 	if !readOnly {
@@ -124,7 +127,7 @@ func OpenFile(path string, readOnly bool) (Storage, error) {
 		if err != nil {
 			return nil, err
 		}
-		logSize, err = logw.Seek(0, os.SEEK_END)
+		logSize, err = logw.Seek(0, os.SEEK_END) //定位到文件的末尾，return offset
 		if err != nil {
 			logw.Close()
 			return nil, err
@@ -307,6 +310,7 @@ func (fs *fileStorage) SetMeta(fd FileDesc) error {
 
 /*
 获取Meta信息，加锁同步
+对于文件存储，返回CURRNET文件内容：对应的MANIFEST文件的FD
  */
 func (fs *fileStorage) GetMeta() (FileDesc, error) {
 	fs.mu.Lock()
@@ -326,6 +330,7 @@ func (fs *fileStorage) GetMeta() (FileDesc, error) {
 	if err != nil {
 		return FileDesc{}, err
 	}
+
 	// Try this in order:
 	// - CURRENT.[0-9]+ ('pending rename' file, descending order)
 	// - CURRENT
@@ -345,6 +350,7 @@ func (fs *fileStorage) GetMeta() (FileDesc, error) {
 			return nil, err
 		}
 		var fd FileDesc
+		//b是文件里的内容
 		if len(b) < 1 || b[len(b)-1] != '\n' || !fsParseNamePtr(string(b[:len(b)-1]), &fd) {
 			fs.log(fmt.Sprintf("%s: corrupted content: %q", name, b))
 			err := &ErrCorrupted{
@@ -396,6 +402,7 @@ func (fs *fileStorage) GetMeta() (FileDesc, error) {
 	var nums []int64
 	for _, name := range names {
 		if strings.HasPrefix(name, "CURRENT.") && name != "CURRENT.bak" {
+			//CURRENT.0~9
 			i, err := strconv.ParseInt(name[8:], 10, 64)
 			if err == nil {
 				nums = append(nums, i)
@@ -414,6 +421,7 @@ func (fs *fileStorage) GetMeta() (FileDesc, error) {
 			pendNames[i] = fmt.Sprintf("CURRENT.%d", num)
 		}
 		pendCur, pendErr = tryCurrents(pendNames)
+		//如果文件不存在，或者文件损坏，尝试CURRENT和CURRENT.bak
 		if pendErr != nil && pendErr != os.ErrNotExist && !isCorrupted(pendErr) {
 			return FileDesc{}, pendErr
 		}
@@ -437,6 +445,7 @@ func (fs *fileStorage) GetMeta() (FileDesc, error) {
 			// catch error.
 			if err := fs.setMeta(curCur.fd); err == nil {
 				// Remove 'pending rename' files.
+				// 删除pending
 				for _, name := range pendNames {
 					if err := os.Remove(filepath.Join(fs.path, name)); err != nil {
 						fs.log(fmt.Sprintf("remove %s: %v", name, err))
@@ -627,6 +636,7 @@ func (fw *fileWrap) Close() error {
 	return err
 }
 
+//根据文件描述符产生对应的文件名
 func fsGenName(fd FileDesc) string {
 	switch fd.Type {
 	case TypeManifest:
@@ -654,6 +664,10 @@ func fsGenOldName(fd FileDesc) string {
 	return fsGenName(fd)
 }
 
+//
+//".log"结尾是 Journal
+//".ldb", ".sst" 结尾的文件是ssTable
+//"MANIFEST"
 func fsParseName(name string) (fd FileDesc, ok bool) {
 	var tail string
 	_, err := fmt.Sscanf(name, "%d.%s", &fd.Num, &tail)
@@ -678,6 +692,7 @@ func fsParseName(name string) (fd FileDesc, ok bool) {
 	return
 }
 
+//根据文件名解析文件类型，并把文件描述符保存在fd指针中
 func fsParseNamePtr(name string, fd *FileDesc) bool {
 	_fd, ok := fsParseName(name)
 	if fd != nil {
