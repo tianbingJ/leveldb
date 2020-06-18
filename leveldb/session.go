@@ -37,6 +37,7 @@ func newErrManifestCorrupted(fd storage.FileDesc, field, reason string) error {
 type session struct {
 	// Need 64-bit alignment.
 	stNextFileNum    int64 // current unused file number
+	//恢复journal文件的时候为什么要大于等于stJournalNum?
 	stJournalNum     int64 // current journal file number; need external synchronization
 	stPrevJournalNum int64 // prev journal file number; no longer used; for compatibility with older version of leveldb
 	stTempFileNum    int64
@@ -158,7 +159,7 @@ func (s *session) recover() (err error) {
 
 		jr      = journal.NewReader(reader, dropper{s, fd}, strict, true)
 		rec     = &sessionRecord{}
-		staging = s.stVersion.newStaging()
+		staging = s.stVersion.newStaging() //创建新的版本
 	)
 	for {
 		var r io.Reader

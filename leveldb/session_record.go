@@ -22,6 +22,11 @@ type byteReader interface {
 }
 
 // These numbers are written to disk and should not be changed.
+// 一个manifest文件包含多个session record.
+// 第一个session record记录了全量的leveldb版本信息， 其他session record记录每次版本的变化。
+
+
+//一下是标记，表示session record中是否有某个信息
 const (
 	recComparer    = 1
 	recJournalNum  = 2
@@ -52,16 +57,17 @@ type dtRecord struct {
 	num   int64
 }
 
+//
 type sessionRecord struct {
 	hasRec         int
-	comparer       string
-	journalNum     int64
+	comparer       string   //comparer名称
+	journalNum     int64    //最新的日志文件编号
 	prevJournalNum int64
 	nextFileNum    int64
-	seqNum         uint64
-	compPtrs       []cpRecord
-	addedTables    []atRecord
-	deletedTables  []dtRecord
+	seqNum         uint64   //数据库已经持久化数据项的最大sequence number
+	compPtrs       []cpRecord   //compact pointers
+	addedTables    []atRecord   //新增的文件信息
+	deletedTables  []dtRecord   //删除的文件信息
 
 	scratch [binary.MaxVarintLen64]byte
 	err     error
@@ -145,6 +151,7 @@ func (p *sessionRecord) putVarint(w io.Writer, x int64) {
 	p.putUvarint(w, uint64(x))
 }
 
+//先写64长度，再写内容
 func (p *sessionRecord) putBytes(w io.Writer, x []byte) {
 	if p.err != nil {
 		return
@@ -156,6 +163,7 @@ func (p *sessionRecord) putBytes(w io.Writer, x []byte) {
 	_, p.err = w.Write(x)
 }
 
+//写入session record
 func (p *sessionRecord) encode(w io.Writer) error {
 	p.err = nil
 	if p.has(recComparer) {
@@ -195,6 +203,7 @@ func (p *sessionRecord) encode(w io.Writer) error {
 	return p.err
 }
 
+//从 r找那个读取一个整数
 func (p *sessionRecord) readUvarintMayEOF(field string, r io.ByteReader, mayEOF bool) uint64 {
 	if p.err != nil {
 		return 0
@@ -213,10 +222,12 @@ func (p *sessionRecord) readUvarintMayEOF(field string, r io.ByteReader, mayEOF 
 	return x
 }
 
+//读取无符号整数
 func (p *sessionRecord) readUvarint(field string, r io.ByteReader) uint64 {
 	return p.readUvarintMayEOF(field, r, false)
 }
 
+//读取整数
 func (p *sessionRecord) readVarint(field string, r io.ByteReader) int64 {
 	x := int64(p.readUvarintMayEOF(field, r, false))
 	if x < 0 {
@@ -225,6 +236,7 @@ func (p *sessionRecord) readVarint(field string, r io.ByteReader) int64 {
 	return x
 }
 
+//读取并返回r中剩余字节
 func (p *sessionRecord) readBytes(field string, r byteReader) []byte {
 	if p.err != nil {
 		return nil
@@ -244,6 +256,7 @@ func (p *sessionRecord) readBytes(field string, r byteReader) []byte {
 	return x
 }
 
+//读取一个整数（level信息）
 func (p *sessionRecord) readLevel(field string, r io.ByteReader) int {
 	if p.err != nil {
 		return 0
@@ -255,6 +268,7 @@ func (p *sessionRecord) readLevel(field string, r io.ByteReader) int {
 	return int(x)
 }
 
+//解码session record
 func (p *sessionRecord) decode(r io.Reader) error {
 	br, ok := r.(byteReader)
 	if !ok {

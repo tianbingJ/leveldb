@@ -487,6 +487,7 @@ func recoverTable(s *session, o *opt.Options) error {
 	return s.commit(rec, false)
 }
 
+//读取journal日志文件
 func (db *DB) recoverJournal() error {
 	// Get all journals and sort it by file number.
 	rawFds, err := db.s.stor.List(storage.TypeJournal)
@@ -650,6 +651,9 @@ func (db *DB) recoverJournal() error {
 	return nil
 }
 
+//TODO 这个方法是什么意思？
+//这个方法会复制journal数据到memDB
+//这个方法与recoverJournal有什么不同？不会修改journal文件
 func (db *DB) recoverJournalRO() error {
 	// Get all journals and sort it by file number.
 	rawFds, err := db.s.stor.List(storage.TypeJournal)
@@ -661,6 +665,7 @@ func (db *DB) recoverJournalRO() error {
 	// Journals that will be recovered.
 	var fds []storage.FileDesc
 	for _, fd := range rawFds {
+		//stJournalNum是什么含义？ 为什么只复制大于它的部分？
 		if fd.Num >= db.s.stJournalNum || fd.Num == db.s.stPrevJournalNum {
 			fds = append(fds, fd)
 		}
@@ -670,7 +675,7 @@ func (db *DB) recoverJournalRO() error {
 		// Options.
 		strict      = db.s.o.GetStrict(opt.StrictJournal)
 		checksum    = db.s.o.GetStrict(opt.StrictJournalChecksum)
-		writeBuffer = db.s.o.GetWriteBuffer()
+		writeBuffer = db.s.o.GetWriteBuffer()   //mdb buffer size   默认4MB
 
 		mdb = memdb.New(db.s.icmp, writeBuffer)
 	)

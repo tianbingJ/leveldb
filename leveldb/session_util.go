@@ -305,6 +305,7 @@ func (s *session) setNextFileNum(num int64) {
 }
 
 // Mark file number as used.
+//设置stNextFileNum是当前num + 1
 func (s *session) markFileNum(num int64) {
 	nextFileNum := num + 1
 	for {
@@ -401,6 +402,7 @@ func (s *session) recordCommited(rec *sessionRecord) {
 }
 
 // Create a new manifest file; need external synchronization.
+// 每次启动leveldb都创建一个新的manifest文件
 func (s *session) newManifest(rec *sessionRecord, v *version) (err error) {
 	fd := storage.FileDesc{Type: storage.TypeManifest, Num: s.allocFileNum()}
 	writer, err := s.stor.Create(fd)
