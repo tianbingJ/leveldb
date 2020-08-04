@@ -15,8 +15,16 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
+/*
+几个相关类型：
+Cache :
+Cacher :
+NS :
+ */
+
 // Cacher provides interface to implements a caching functionality.
 // An implementation must be safe for concurrent use.
+// lru的接口
 type Cacher interface {
 	// Capacity returns cache capacity.
 	Capacity() int
@@ -69,10 +77,13 @@ const (
 	mOverflowGrowThreshold = 1 << 7   //总节点个数
 )
 
-//桶
+/*
+桶用列表表示
+每个桶有自己的锁
+*/
 type mBucket struct {
 	mu     sync.Mutex
-	node   []*Node //桶用列表表示？
+	node   []*Node
 	frozen bool
 }
 
@@ -86,8 +97,9 @@ func (b *mBucket) freeze() []*Node {
 	return b.node
 }
 
-//bucket和Cache的关系？
 /*
+   bucket和Cache的关系？
+   bucket是Cache中的桶
 	r:
 	h:
 	hash:
@@ -603,11 +615,12 @@ func (r *Cache) CloseWeak() error {
 }
 
 // Node is a 'cache node'.
+//
 type Node struct {
 	r *Cache
 
 	hash    uint32
-	ns, key uint64
+	ns, key uint64  //ns: name space
 
 	mu    sync.Mutex
 	size  int
@@ -617,6 +630,7 @@ type Node struct {
 	onDel []func()
 
 	//Node在Hash表中，这里是个指向LRU链表的指针
+	//为什么要使用Pointer，而不是直接使用 &lruNode
 	CacheData unsafe.Pointer
 }
 
@@ -646,6 +660,7 @@ func (n *Node) Ref() int32 {
 }
 
 // GetHandle returns an handle for this 'cache node'.
+//get Handle时会增加节点的引用计数
 func (n *Node) GetHandle() *Handle {
 	if atomic.AddInt32(&n.ref, 1) <= 1 {
 		panic("BUG: Node.GetHandle on zero ref")
@@ -687,6 +702,7 @@ func (h *Handle) Value() Value {
 // It is safe to call release multiple times.
 func (h *Handle) Release() {
 	nPtr := atomic.LoadPointer(&h.n)
+	//把handle中的指针引用设置成nil
 	if nPtr != nil && atomic.CompareAndSwapPointer(&h.n, nPtr, nil) {
 		n := (*Node)(nPtr)
 		n.unrefLocked()

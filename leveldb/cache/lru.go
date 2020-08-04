@@ -11,15 +11,30 @@ import (
 	"unsafe"
 )
 
+/*
+lru与cache配合，有几种数据结构：
+
+lru : lru链表
+lruNode : lru链表里的节点
+Node  :  cache中hash表中的节点
+CacheData : Node中的数据，只想在lru中的lruNode，可以从cache中定位到lru中的节点。
+Handle : 含有Node的指针，并提供方法:
+	1.Value(): 得到指向的Node中的数据
+	2.Release() : 减少指向cache Node的引用
+*/
+
 type lruNode struct {
 	n   *Node
 	h   *Handle
-	ban bool  //从链表中删除
+	/*
+	将hash表对应的lruNode节点从链表中删除，并"尝试"从hash表中删除（当引用计数为0时才真正删除）。
+	 */
+	ban bool
 
 	next, prev *lruNode
 }
 
-//at 插入在node n前面
+//节点n插入在at节点的后面
 func (n *lruNode) insert(at *lruNode) {
 	x := at.next
 	at.next = n
@@ -82,34 +97,38 @@ func (r *lru) SetCapacity(capacity int) {
 	}
 }
 
-//TODO 这里没有看明白, 看完cache之后再看
-//为什么CacheData会是LruNode? Node中有额外的空间存储数据，CacheData用于lru中的节点
-//将Node提升为链表的头部
+/*
+将Node提升为lru中的头结点
+Node可能之前并不是lru中的节点(case 1)，把Node放入lru中的过程，可能会导致lru的空间超过capacity，需要驱逐部分节点。
+*/
 func (r *lru) Promote(n *Node) {
 	var evicted []*lruNode
 
 	r.mu.Lock()
-	if n.CacheData == nil { //表示之前没有在LRU链表之中
+	//case 1: 之前没有在LRU链表之中
+	if n.CacheData == nil {
+		//Node n的大小要小于lru的容量，否则直接忽略
 		if n.Size() <= r.capacity {
 			rn := &lruNode{n: n, h: n.GetHandle()}
 			rn.insert(&r.recent)
 			n.CacheData = unsafe.Pointer(rn)
 			r.used += n.Size()
 
+			//容量超过了lru的容量，需要从lru中驱逐一些节点
 			for r.used > r.capacity {
 				rn := r.recent.prev
 				if rn == nil {
 					panic("BUG: invalid LRU used or capacity counter")
 				}
 				rn.remove()
-				rn.n.CacheData = nil
+				rn.n.CacheData = nil  //设置Node指向的lru node是nil
 				r.used -= rn.n.Size()
 				evicted = append(evicted, rn)
 			}
 		}
 	} else {
-		//插入到链表头部
 		rn := (*lruNode)(n.CacheData)
+		//如果lru没有被ban， 则插入到链表头
 		if !rn.ban {
 			rn.remove()
 			rn.insert(&r.recent)
@@ -122,6 +141,9 @@ func (r *lru) Promote(n *Node) {
 	}
 }
 
+//将节点从lru中删除，ban掉.
+//与此同时并不释放lruNode的空间,Node中还存在着指向lru中的节点.
+//为什么不设置 n.CacheData = nil ?
 func (r *lru) Ban(n *Node) {
 	r.mu.Lock()
 	if n.CacheData == nil {
@@ -142,6 +164,9 @@ func (r *lru) Ban(n *Node) {
 	r.mu.Unlock()
 }
 
+/*
+Evict只是接触Node和lruNode的关系？ 并没有从lru中删除lruNode节点? 为什么不调用rn.remove()
+ */
 func (r *lru) Evict(n *Node) {
 	r.mu.Lock()
 	rn := (*lruNode)(n.CacheData)
@@ -149,12 +174,16 @@ func (r *lru) Evict(n *Node) {
 		r.mu.Unlock()
 		return
 	}
+	//Node不再指向lruNode
 	n.CacheData = nil
 	r.mu.Unlock()
-
 	rn.h.Release()
 }
 
+/*
+evict 这个namespace 所有的node.
+针对lru中的Node会调用remove()方法从lru中删除。为什么Evict()方法不会删除？
+ */
 func (r *lru) EvictNS(ns uint64) {
 	var evicted []*lruNode
 

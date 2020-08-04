@@ -4,6 +4,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+/*
+过滤器的布隆过滤器实现
+ */
 package filter
 
 import (
