@@ -20,16 +20,19 @@ var (
 
 // IteratorSeeker is the interface that wraps the 'seeks method'.
 type IteratorSeeker interface {
+
 	// First moves the iterator to the first key/value pair. If the iterator
 	// only contains one key/value pair then First and Last would moves
 	// to the same key/value pair.
 	// It returns whether such pair exist.
+	// 指向迭代器的第一个位置, 如果元素存在返回true
 	First() bool
 
 	// Last moves the iterator to the last key/value pair. If the iterator
 	// only contains one key/value pair then First and Last would moves
 	// to the same key/value pair.
 	// It returns whether such pair exist.
+	// 设置迭代器指向最后元素的位置，存在元素返回true
 	Last() bool
 
 	// Seek moves the iterator to the first key/value pair whose key is greater
@@ -37,14 +40,17 @@ type IteratorSeeker interface {
 	// It returns whether such pair exist.
 	//
 	// It is safe to modify the contents of the argument after Seek returns.
+	//定位到第一个大于等于key的位置，存在则返回true
 	Seek(key []byte) bool
 
 	// Next moves the iterator to the next key/value pair.
 	// It returns false if the iterator is exhausted.
+	//往后移动一个位置
 	Next() bool
 
 	// Prev moves the iterator to the previous key/value pair.
 	// It returns false if the iterator is exhausted.
+	//往前移动一个位置
 	Prev() bool
 }
 
@@ -80,17 +86,21 @@ type CommonIterator interface {
 // Also, an iterator is not necessarily safe for concurrent use, but it is
 // safe to use multiple iterators concurrently, with each in a dedicated
 // goroutine.
+// 迭代器遍历DB的 key value pairs in order
+// 当遇到错误的时候，调用seek方法会return false.
 type Iterator interface {
 	CommonIterator
 
 	// Key returns the key of the current key/value pair, or nil if done.
 	// The caller should not modify the contents of the returned slice, and
 	// its contents may change on the next call to any 'seeks method'.
+	// 返回迭代器当前指向的key，不存在则返回nil
 	Key() []byte
 
 	// Value returns the value of the current key/value pair, or nil if done.
 	// The caller should not modify the contents of the returned slice, and
 	// its contents may change on the next call to any 'seeks method'.
+	// 返回当前指向的value
 	Value() []byte
 }
 

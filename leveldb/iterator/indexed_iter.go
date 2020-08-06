@@ -13,25 +13,33 @@ import (
 
 // IteratorIndexer is the interface that wraps CommonIterator and basic Get
 // method. IteratorIndexer provides index for indexed iterator.
+/*
+	索引迭代器
+ */
 type IteratorIndexer interface {
 	CommonIterator
 
 	// Get returns a new data iterator for the current position, or nil if
 	// done.
+	// 返回一个数据迭代器
 	Get() Iterator
 }
 
 type indexedIterator struct {
 	util.BasicReleaser
 	index  IteratorIndexer
+	//strict?
 	strict bool
 
+	// 数据迭代器
 	data   Iterator
 	err    error
+	// err发生时的回调函数
 	errf   func(err error)
 	closed bool
 }
 
+// 使用当前索引返回一个数据迭代器
 func (i *indexedIterator) setData() {
 	if i.data != nil {
 		i.data.Release()
@@ -39,6 +47,7 @@ func (i *indexedIterator) setData() {
 	i.data = i.index.Get()
 }
 
+// 清楚数据
 func (i *indexedIterator) clearData() {
 	if i.data != nil {
 		i.data.Release()
@@ -46,6 +55,7 @@ func (i *indexedIterator) clearData() {
 	i.data = nil
 }
 
+//
 func (i *indexedIterator) indexErr() {
 	if err := i.index.Error(); err != nil {
 		if i.errf != nil {
@@ -68,6 +78,7 @@ func (i *indexedIterator) dataErr() bool {
 	return false
 }
 
+// 是否合法为什么是判断data ?
 func (i *indexedIterator) Valid() bool {
 	return i.data != nil && i.data.Valid()
 }
@@ -137,6 +148,8 @@ func (i *indexedIterator) Seek(key []byte) bool {
 	return true
 }
 
+// 索引迭代器Next方法
+//
 func (i *indexedIterator) Next() bool {
 	if i.err != nil {
 		return false

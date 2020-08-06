@@ -17,6 +17,8 @@ type BasicArray interface {
 
 	// Search finds smallest index that point to a key that is greater
 	// than or equal to the given key.
+	//找到第一个大于等于只等key的下标
+	//数组需是有序数组?
 	Search(key []byte) int
 }
 
@@ -25,10 +27,12 @@ type Array interface {
 	BasicArray
 
 	// Index returns key/value pair with index of i.
+	// 返回下标是i的key value
 	Index(i int) (key, value []byte)
 }
 
 // Array is the interface that wraps BasicArray and basic Get method.
+//
 type ArrayIndexer interface {
 	BasicArray
 
@@ -36,6 +40,7 @@ type ArrayIndexer interface {
 	Get(i int) Iterator
 }
 
+// 数组迭代器
 type basicArrayIterator struct {
 	util.BasicReleaser
 	array BasicArray
@@ -47,6 +52,7 @@ func (i *basicArrayIterator) Valid() bool {
 	return i.pos >= 0 && i.pos < i.array.Len() && !i.Released()
 }
 
+// 设置迭代器执行第一个元素
 func (i *basicArrayIterator) First() bool {
 	if i.Released() {
 		i.err = ErrIterReleased
@@ -76,6 +82,7 @@ func (i *basicArrayIterator) Last() bool {
 	return true
 }
 
+//定位到第一个大于等于key的位置
 func (i *basicArrayIterator) Seek(key []byte) bool {
 	if i.Released() {
 		i.err = ErrIterReleased
@@ -94,6 +101,7 @@ func (i *basicArrayIterator) Seek(key []byte) bool {
 	return true
 }
 
+//往后移动一个位置
 func (i *basicArrayIterator) Next() bool {
 	if i.Released() {
 		i.err = ErrIterReleased
@@ -108,6 +116,7 @@ func (i *basicArrayIterator) Next() bool {
 	return true
 }
 
+//往前移动一个位置
 func (i *basicArrayIterator) Prev() bool {
 	if i.Released() {
 		i.err = ErrIterReleased
@@ -127,10 +136,13 @@ func (i *basicArrayIterator) Error() error { return i.err }
 type arrayIterator struct {
 	basicArrayIterator
 	array      Array
+	//这个pos和basicArrayIterator中的pos有何不一样？
+
 	pos        int
 	key, value []byte
 }
 
+//用basicArrayIterator中的pos指向的key value更新当前缓存的key value
 func (i *arrayIterator) updateKV() {
 	if i.pos == i.basicArrayIterator.pos {
 		return
