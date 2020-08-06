@@ -56,6 +56,8 @@ func (f bloomFilter) Contains(filter, key []byte) bool {
 
 func (f bloomFilter) NewGenerator() FilterGenerator {
 	// Round down to reduce probing cost a little bit.
+	// f = m / n. m是布隆过滤器的bit数字，n是集合元素的个数
+	// k是方法的个数
 	k := uint8(f * 69 / 100) // 0.69 =~ ln(2)
 	if k < 1 {
 		k = 1
@@ -68,21 +70,27 @@ func (f bloomFilter) NewGenerator() FilterGenerator {
 	}
 }
 
+//布隆过滤器生成器
 type bloomFilterGenerator struct {
+	// f = bitsPerKey
 	n int
+	//hash函数的个数
 	k uint8
 
 	keyHashes []uint32
 }
 
+//根据key生成hash值，并添加到keyHashes列表中
 func (g *bloomFilterGenerator) Add(key []byte) {
 	// Use double-hashing to generate a sequence of hash values.
 	// See analysis in [Kirsch,Mitzenmacher 2006].
 	g.keyHashes = append(g.keyHashes, bloomHash(key))
 }
 
+// 根据
 func (g *bloomFilterGenerator) Generate(b Buffer) {
 	// Compute bloom filter size (in both bits and bytes)
+	// 布隆过滤器的位数， n = bitsPerKey
 	nBits := uint32(len(g.keyHashes) * g.n)
 	// For small n, we can see a very high false positive rate.  Fix it
 	// by enforcing a minimum bloom filter length.
@@ -93,6 +101,7 @@ func (g *bloomFilterGenerator) Generate(b Buffer) {
 	nBits = nBytes * 8
 
 	dest := b.Alloc(int(nBytes) + 1)
+	//buffer里最后一个字节保存 hash函数的个数
 	dest[nBytes] = g.k
 	for _, kh := range g.keyHashes {
 		delta := (kh >> 17) | (kh << 15) // Rotate right 17 bits
@@ -103,7 +112,7 @@ func (g *bloomFilterGenerator) Generate(b Buffer) {
 		}
 	}
 
-	g.keyHashes = g.keyHashes[:0]
+	g.keyHashes = g.keyHashes[:0] //释放key的空间
 }
 
 // NewBloomFilter creates a new initialized bloom filter for given
@@ -114,6 +123,7 @@ func (g *bloomFilterGenerator) Generate(b Buffer) {
 // changing bitsPerKey. This means that no big performance penalty will
 // be experienced when changing the parameter. See documentation for
 // opt.Options.Filter for more information.
+// bitsPerKey = m / n.即布隆过滤器中的位数 / 集合元素的个数
 func NewBloomFilter(bitsPerKey int) Filter {
 	return bloomFilter(bitsPerKey)
 }
