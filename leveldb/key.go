@@ -72,6 +72,8 @@ func init() {
 
 type internalKey []byte
 
+//ukey:用户侧的key， 添加上seq和type转成internal key
+//使用seq使得key有版本的概念, seq number使用7个字节，最后一个字节放类型
 func makeInternalKey(dst, ukey []byte, seq uint64, kt keyType) internalKey {
 	if seq > keyMaxSeq {
 		panic("leveldb: invalid sequence number")
