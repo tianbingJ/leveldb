@@ -35,6 +35,7 @@ type version struct {
 	cLevel int
 	cScore float64
 
+	//cSeek不等于nil的时候表示需要compaction
 	cSeek unsafe.Pointer
 
 	closing  bool
@@ -399,15 +400,21 @@ func (v *version) computeCompaction() {
 	bestLevel := int(-1)
 	bestScore := float64(-1)
 
-	statFiles := make([]int, len(v.levels))
-	statSizes := make([]string, len(v.levels))
-	statScore := make([]string, len(v.levels))
+	statFiles := make([]int, len(v.levels))  //每一层文件的个数
+	statSizes := make([]string, len(v.levels)) //每一层文件的总大小
+	statScore := make([]string, len(v.levels)) //每一层的得分
 	statTotSize := int64(0)
 
 	for level, tables := range v.levels {
 		var score float64
 		size := tables.size()
 		if level == 0 {
+			/*
+			0层文件特殊处理：使用文件的数量代替空间的大小，原因有两条：
+			1.不产生大量的0层压缩。
+			2.希望避免产生大量的文件，而每个文件都很小。
+			GetCompactionL0Trigger默认值是4，也就是说文件数大于4个，score就大于1.需要压实
+			 */
 			// We treat level-0 specially by bounding the number of files
 			// instead of number of bytes for two reasons:
 			//
@@ -421,6 +428,13 @@ func (v *version) computeCompaction() {
 			// overwrites/deletions).
 			score = float64(len(tables)) / float64(v.s.o.GetCompactionL0Trigger())
 		} else {
+			/*
+			默认：
+			第1层超过10M就压实
+			第2层超过100M就压实
+			第3层超过1G就压实
+			....
+			 */
 			score = float64(size) / float64(v.s.o.GetCompactionTotalSize(level))
 		}
 
@@ -446,12 +460,18 @@ func (v *version) needCompaction() bool {
 	return v.cScore >= 1 || atomic.LoadPointer(&v.cSeek) != nil
 }
 
-//
+//文件删除集合、添加集合
 type tablesScratch struct {
+	//添加的集合
 	added   map[int64]atRecord
+	//删除的集合
 	deleted map[int64]struct{}
 }
 
+/*
+versionStaging记录了1.基础的version和2.每层的变动。
+这两者结合在一起可以生产一个新的version.
+ */
 type versionStaging struct {
 	base   *version
 	//每个level的 添加、删除信息
@@ -468,6 +488,7 @@ func (p *versionStaging) getScratch(level int) *tablesScratch {
 	return &(p.levels[level])
 }
 
+//根据session record里的变更记录，构建versionStaging里的文件集合
 func (p *versionStaging) commit(r *sessionRecord) {
 	// Deleted tables.
 	//处理删除的文件信息:1.标记文件被删除  2.从文件添加集合中删除
@@ -499,10 +520,12 @@ func (p *versionStaging) commit(r *sessionRecord) {
 }
 
 /*
-
+	trivial: 好像是文件比较多的时候需要用二分查找优化
+	生成新的version
  */
 func (p *versionStaging) finish(trivial bool) *version {
 	// Build new version.
+	// 构建一个新的version
 	nv := newVersion(p.base.s)
 	numLevel := len(p.levels)
 	if len(p.base.levels) > numLevel {
@@ -518,23 +541,28 @@ func (p *versionStaging) finish(trivial bool) *version {
 		if level < len(p.levels) {
 			scratch := p.levels[level]
 
+			//如果该层没有变动，则跳过
 			// Short circuit if there is no change at all.
 			if len(scratch.added) == 0 && len(scratch.deleted) == 0 {
 				nv.levels[level] = baseTabels
 				continue
 			}
 
+			//	存储每一层要保留的文件顺序，每一层都是有序的
 			var nt tFiles
 			// Prealloc list if possible.
+			// 分配空间，大小 = 原来的 + 添加的 - 删除的
 			if n := len(baseTabels) + len(scratch.added) - len(scratch.deleted); n > 0 {
 				nt = make(tFiles, 0, n)
 			}
 
 			// Base tables.
 			for _, t := range baseTabels {
+				//如果这个文件已经被删除，OK
 				if _, ok := scratch.deleted[t.fd.Num]; ok {
 					continue
 				}
+				//如果文件在添加列表里，跳过。后面会专门处理added的情况
 				if _, ok := scratch.added[t.fd.Num]; ok {
 					continue
 				}
@@ -542,6 +570,7 @@ func (p *versionStaging) finish(trivial bool) *version {
 			}
 
 			// Avoid resort if only files in this level are deleted
+			// 如果没有新增文件的情况， 跳过.
 			if len(scratch.added) == 0 {
 				nv.levels[level] = nt
 				continue
@@ -557,18 +586,29 @@ func (p *versionStaging) finish(trivial bool) *version {
 			// already ordered arrays. Therefore, for the normal table compaction, we use
 			// binary search here to find the insert index to insert a batch of new added
 			// files directly instead of using qsort.
+			/*
+			处理新添加的文件。
+			1. 表压实一次只涉及两层，source层和source + 1产生的新文件可以直接放到source + 1层，不会和source + 1层的其他文件有重叠。
+			2. 如果leveldb维护的数据非常大的话，每层的文件也会比较多，使用二分进行检索可以提高效率（代替qsort）。
+			 */
+			//处理该层新增的文件
 			if trivial && len(scratch.added) > 0 {
 				added := make(tFiles, 0, len(scratch.added))
 				for _, r := range scratch.added {
 					added = append(added, tableFileFromRecord(r))
 				}
 				if level == 0 {
+					//这里是按照降序排序, 从这里找到最小值
 					added.sortByNum()
+					//nt是要保留的文件列表,在nt中二分查找，nt是有序的，找到位置，把新增的文件插入到nt中
+					// 这里为什么把新增的所有文件都插入进去？ TODO
 					index := nt.searchNumLess(added[len(added)-1].fd.Num)
 					nt = append(nt[:index], append(added, nt[index:]...)...)
 				} else {
+					//新增的文件，按照key排序
 					added.sortByKey(p.base.s.icmp)
 					_, amax := added.getRange(p.base.s.icmp)
+					//这里为什么把新增的所有文件都插入进去？ TODO
 					index := nt.searchMin(p.base.s.icmp, amax)
 					nt = append(nt[:index], append(added, nt[index:]...)...)
 				}
@@ -581,6 +621,7 @@ func (p *versionStaging) finish(trivial bool) *version {
 				nt = append(nt, tableFileFromRecord(r))
 			}
 
+			//重新排序
 			if len(nt) != 0 {
 				// Sort tables.
 				if level == 0 {
@@ -597,14 +638,15 @@ func (p *versionStaging) finish(trivial bool) *version {
 	}
 
 	// Trim levels.
+	// 删除之后，可能这层已经没有文件
 	n := len(nv.levels)
 	for ; n > 0 && nv.levels[n-1] == nil; n-- {
 	}
 	nv.levels = nv.levels[:n]
 
 	// Compute compaction score for new version.
+	// 计算分数
 	nv.computeCompaction()
-
 	return nv
 }
 

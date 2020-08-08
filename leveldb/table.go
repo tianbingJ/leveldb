@@ -85,6 +85,7 @@ func newTableFile(fd storage.FileDesc, size int64, imin, imax internalKey) *tFil
 	return f
 }
 
+//根据添加的文件信息生成tFile结构
 func tableFileFromRecord(r atRecord) *tFile {
 	return newTableFile(storage.FileDesc{Type: storage.TypeTable, Num: r.num}, r.size, r.imin, r.imax)
 }
@@ -164,6 +165,7 @@ func (tf tFiles) searchMax(icmp *iComparer, ikey internalKey) int {
 
 // Searches smallest index of tables whose its file number
 // is smaller than the given number.
+// 找到文件编号小于num的最小的那个
 func (tf tFiles) searchNumLess(num int64) int {
 	return sort.Search(len(tf), func(i int) bool {
 		return tf[i].fd.Num < num
