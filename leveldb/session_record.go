@@ -44,6 +44,7 @@ type cpRecord struct {
 	ikey  internalKey
 }
 
+//添加的文件信息 added table record
 type atRecord struct {
 	level int
 	num   int64
@@ -52,12 +53,13 @@ type atRecord struct {
 	imax  internalKey
 }
 
+//删除的文件信息 deleted table record
 type dtRecord struct {
 	level int
 	num   int64
 }
 
-//
+//session记录了从版本之间的变化，添加了哪些文件、删除了哪些文件，最新的journal日志文件编号
 type sessionRecord struct {
 	hasRec         int
 	comparer       string   //comparer名称

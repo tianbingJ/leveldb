@@ -70,6 +70,7 @@ type vTask struct {
 func (s *session) refLoop() {
 	var (
 		fileRef    = make(map[int64]int)    // Table file reference counter
+		//存储versionId vTask的映射关系
 		ref        = make(map[int64]*vTask) // Current referencing version store
 		deltas     = make(map[int64]*vDelta)
 		referenced = make(map[int64]struct{})

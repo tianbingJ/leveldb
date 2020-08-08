@@ -57,7 +57,9 @@ type session struct {
 	stCompPtrs  []internalKey // compaction pointers; need external synchronization
 	stVersion   *version      // current version
 	ntVersionId int64         // next version id to assign
+	//用于传递version引用的task(首次传递)
 	refCh       chan *vTask
+	//用于传递version删除的task(ref cnt = 0)
 	relCh       chan *vTask
 	deltaCh     chan *vDelta
 	abandon     chan int64
@@ -65,6 +67,7 @@ type session struct {
 
 	//session close里会wait
 	closeW      sync.WaitGroup
+	//version lock
 	vmu         sync.Mutex
 
 	// Testing fields

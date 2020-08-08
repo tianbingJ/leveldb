@@ -60,15 +60,19 @@ type DB struct {
 
 	// Snapshot.
 	snapsMu   sync.Mutex
+	// 快照列表,不知道这个列表有什么意义,读的时候用当前的seq number就行？
 	snapsList *list.List
 
 	// Write.
 	batchPool    sync.Pool
 	writeMergeC  chan writeMerge  //等待merge的数据block在这里
 	writeMergedC chan bool		  //看起来writeMergeC和writeMergedC是配对使用的：X的merge请求的数据被merge之后，会向writeMergedC发通知，X会从writeMergedC读到这个通知
-	//读是释放锁，写是获取锁
+	//读是释放锁，写是获取锁.获取写锁的才能实现写入操作
 	writeLockC   chan struct{} 	//写锁，可以缓存一个对象  读取是释放锁，写入是获取锁
 	writeAckC    chan error 	//写确认通道，没有error， 传递的是nil
+	//上面4个chan的意思是： 先通过writeLockC获取写锁，然后从writeMergeC读取需要merge的batch or数据，merge成功之后给writeMergedC发送ACK通知，然后最终结果通过writeAckC发送。
+	//merge了几个批次，就往writeAckC发送几条消息
+
 	writeDelay   time.Duration    //统计连续write delay的累计时间
 	writeDelayN  int			  //统计连续write delay的累计次数
 	tr           *Transaction
@@ -775,6 +779,14 @@ func memGet(mdb *memdb.DB, ikey internalKey, icmp *iComparer) (ok bool, mv []byt
 	return
 }
 
+/*
+seq: 读取数据时的seq number
+auxm 跟事务有关.
+auxt 跟事务有关
+
+1.先从DB中读取  memDB -> freeze MemDB
+2.从sstable文件中读取0层-> 1层->2层...
+ */
 func (db *DB) get(auxm *memdb.DB, auxt tFiles, key []byte, seq uint64, ro *opt.ReadOptions) (value []byte, err error) {
 	ikey := makeInternalKey(nil, key, seq, keyTypeSeek)
 
@@ -785,6 +797,7 @@ func (db *DB) get(auxm *memdb.DB, auxt tFiles, key []byte, seq uint64, ro *opt.R
 	}
 
 	em, fm := db.getMems()
+	//首先从活跃的memDB中读取，然后从冻结的memDB读取.
 	for _, m := range [...]*memDB{em, fm} {
 		if m == nil {
 			continue
@@ -855,6 +868,7 @@ func (db *DB) has(auxm *memdb.DB, auxt tFiles, key []byte, seq uint64, ro *opt.R
 // The returned slice is its own copy, it is safe to modify the contents
 // of the returned slice.
 // It is safe to modify the contents of the argument after Get returns.
+// 从DB中读取key，取得的数据是它自己的备份，内容可以修改
 func (db *DB) Get(key []byte, ro *opt.ReadOptions) (value []byte, err error) {
 	err = db.ok()
 	if err != nil {
@@ -863,6 +877,7 @@ func (db *DB) Get(key []byte, ro *opt.ReadOptions) (value []byte, err error) {
 
 	se := db.acquireSnapshot()
 	defer db.releaseSnapshot(se)
+	//获取到snapshot的seq
 	return db.get(nil, nil, key, se.seq, ro)
 }
 

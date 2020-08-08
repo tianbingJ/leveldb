@@ -56,6 +56,7 @@ type Cacher interface {
 type Value interface{}
 
 // NamespaceGetter provides convenient wrapper for namespace.
+//
 type NamespaceGetter struct {
 	Cache *Cache
 	NS    uint64
@@ -105,8 +106,10 @@ func (b *mBucket) freeze() []*Node {
 	hash:
 	ns:
 	key:
-	noset:
+	noset: 当bucket中不存在是，不添加node
 	hash，ns，key都相同时认为找到了node
+
+	返回值：done，如果mBucket被冻结了，返回false， 返回true
  */
 func (b *mBucket) get(r *Cache, h *mNode, hash uint32, ns, key uint64, noset bool) (done, added bool, n *Node) {
 	b.mu.Lock()
@@ -406,6 +409,7 @@ func (r *Cache) SetCapacity(capacity int) {
 // The returned 'cache handle' should be released after use by calling Release
 // method.
 // 根据namespace和key获取cache node，如果node不存在并且setFunc不是nil，则会调用setFunc创建这个node
+// setFunc会更新缓存
 func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Handle {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -414,9 +418,11 @@ func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Han
 	}
 
 	hash := murmur32(ns, key, 0xf00)
+	//为什么是个循环？
+	//bucket没有被冻结了，则done = false, 继续循环，知道未被冻结为止
 	for {
-		h, b := r.getBucket(hash)
-		//setFunc != nil则会创建这个节点
+		h, b := r.getBucket(hash) // head 和bucket
+		//setFunc != nil则会创建这个节点.否则往cache中添加缓存
 		done, _, n := b.get(r, h, hash, ns, key, setFunc == nil)
 		if done {
 			if n != nil {
@@ -428,6 +434,7 @@ func (r *Cache) Get(ns, key uint64, setFunc func() (size int, value Value)) *Han
 						return nil
 					}
 
+					//设置value
 					n.size, n.value = setFunc()
 					if n.value == nil {
 						n.size = 0
@@ -685,6 +692,7 @@ func (n *Node) unrefLocked() {
 }
 
 // Handle is a 'cache handle' of a 'cache node'.
+// Handle是一个*Node
 type Handle struct {
 	n unsafe.Pointer // *Node
 }

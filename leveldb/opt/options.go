@@ -676,6 +676,7 @@ type WriteOptions struct {
 	// NoWriteMerge allows disabling write merge.
 	//
 	// The default is false.
+	// 写操作是否合并
 	NoWriteMerge bool
 
 	// Sync is whether to sync underlying writes from the OS buffer cache

@@ -21,6 +21,8 @@ import (
 )
 
 // tFile holds basic information about a table.
+// tfile 提供一个table的基础信息
+// 最大key，最小key
 type tFile struct {
 	fd         storage.FileDesc
 	seekLeft   int32
@@ -29,11 +31,13 @@ type tFile struct {
 }
 
 // Returns true if given key is after largest key of this table.
+// 指定的key比tFile的最大值还打
 func (t *tFile) after(icmp *iComparer, ukey []byte) bool {
 	return ukey != nil && icmp.uCompare(ukey, t.imax.ukey()) > 0
 }
 
 // Returns true if given key is before smallest key of this table.
+// 指定的key比tFile的最小值还小
 func (t *tFile) before(icmp *iComparer, ukey []byte) bool {
 	return ukey != nil && icmp.uCompare(ukey, t.imin.ukey()) < 0
 }
@@ -379,7 +383,9 @@ type tOps struct {
 	s            *session
 	noSync       bool
 	evictRemoved bool
+	//缓存, tFile的数据缓存
 	cache        *cache.Cache
+	//缓存
 	bcache       *cache.Cache
 	bpool        *util.BufferPool
 }
@@ -430,7 +436,10 @@ func (t *tOps) createFrom(src iterator.Iterator) (f *tFile, n int, err error) {
 
 // Opens table. It returns a cache handle, which should
 // be released after use.
-// TODO 缓存没看，这里先跳过
+/*
+返回值：
+ch :
+ */
 func (t *tOps) open(f *tFile) (ch *cache.Handle, err error) {
 	ch = t.cache.Get(0, uint64(f.fd.Num), func() (size int, value cache.Value) {
 		var r storage.Reader
@@ -461,6 +470,13 @@ func (t *tOps) open(f *tFile) (ch *cache.Handle, err error) {
 
 // Finds key/value pair whose key is greater than or equal to the
 // given key.
+/*
+ 找到大于等于当前key 的key value
+ 返回值：
+	rkey: 右边的key
+	rvalue: 右边的value
+	err:
+ */
 func (t *tOps) find(f *tFile, key []byte, ro *opt.ReadOptions) (rkey, rvalue []byte, err error) {
 	ch, err := t.open(f)
 	if err != nil {
@@ -471,6 +487,7 @@ func (t *tOps) find(f *tFile, key []byte, ro *opt.ReadOptions) (rkey, rvalue []b
 }
 
 // Finds key that is greater than or equal to the given key.
+//找到大于等于当前key的第一个key
 func (t *tOps) findKey(f *tFile, key []byte, ro *opt.ReadOptions) (rkey []byte, err error) {
 	ch, err := t.open(f)
 	if err != nil {
@@ -491,6 +508,7 @@ func (t *tOps) offsetOf(f *tFile, key []byte) (offset int64, err error) {
 }
 
 // Creates an iterator from the given table.
+// 创建迭代器
 func (t *tOps) newIterator(f *tFile, slice *util.Range, ro *opt.ReadOptions) iterator.Iterator {
 	ch, err := t.open(f)
 	if err != nil {
@@ -531,9 +549,9 @@ func (t *tOps) close() {
 // Creates new initialized table ops instance.
 func newTableOps(s *session) *tOps {
 	var (
-		//缓存打开的sstable文件句柄以及元数据
-		cacher cache.Cacher
 		//缓存读过sstable里的dataBlock
+		cacher cache.Cacher
+		//缓存打开的sstable文件句柄以及元数据
 		bcache *cache.Cache
 		bpool  *util.BufferPool
 	)

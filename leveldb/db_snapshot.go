@@ -18,17 +18,23 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
+//snaplist里的内容
 type snapshotElement struct {
+	//seq number
 	seq uint64
+	//引用计数
 	ref int
+	//指向链表中的元素
 	e   *list.Element
 }
 
 // Acquires a snapshot, based on latest sequence.
+// 创建一个快照
 func (db *DB) acquireSnapshot() *snapshotElement {
 	db.snapsMu.Lock()
 	defer db.snapsMu.Unlock()
 
+	//DB当前的seq
 	seq := db.getSeq()
 
 	if e := db.snapsList.Back(); e != nil {
@@ -37,6 +43,7 @@ func (db *DB) acquireSnapshot() *snapshotElement {
 			se.ref++
 			return se
 		} else if seq < se.seq {
+			// 如果DB当前的seq比快照里的seq还小，说明seq不是递增的，抛异常
 			panic("leveldb: sequence number is not increasing")
 		}
 	}

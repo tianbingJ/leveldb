@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
-
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
@@ -26,11 +25,13 @@ type version struct {
 	id int64 // unique monotonous increasing version id
 	s  *session
 
-	levels []tFiles
+	levels []tFiles // 每一层对应的tFiles
 
 	// Level that should be compacted next and its compaction score.
 	// Score < 1 means compaction is not strictly needed. These fields
 	// are initialized by computeCompaction()
+	// compaction level, 下一个需要compaction的level和它的分数，
+	// 分数小于1，意味着压缩不是必须的
 	cLevel int
 	cScore float64
 
@@ -42,17 +43,21 @@ type version struct {
 }
 
 // newVersion creates a new version with an unique monotonous increasing id.
+// 什么时候创建version？
+// 创建session的时候会创建version, 同一个session递增
 func newVersion(s *session) *version {
 	id := atomic.AddInt64(&s.ntVersionId, 1)
 	nv := &version{s: s, id: id - 1}
 	return nv
 }
 
+//增加引用计数
 func (v *version) incref() {
 	if v.released {
 		panic("already released")
 	}
 
+	//第一次被引用,传递vTask到session
 	v.ref++
 	if v.ref == 1 {
 		select {
@@ -64,6 +69,7 @@ func (v *version) incref() {
 	}
 }
 
+//释放版本
 func (v *version) releaseNB() {
 	v.ref--
 	if v.ref > 0 {
@@ -87,6 +93,11 @@ func (v *version) release() {
 	v.s.vmu.Unlock()
 }
 
+/**
+	遍历tFiles，对于满足条件的tFile调用f(level int, t * tFile) bool
+	f : 对于每个需要遍历的文件，调用f. f返回true表示需要继续迭代，返回false表示不需要继续迭代
+	lf : 找到了(f 返回true)，调用lf方法.可以用于处理0层的情况，查找元素的时候，0层需要遍历所有的文件。
+ */
 func (v *version) walkOverlapping(aux tFiles, ikey internalKey, f func(level int, t *tFile) bool, lf func(level int) bool) {
 	ukey := ikey.ukey()
 
@@ -112,10 +123,12 @@ func (v *version) walkOverlapping(aux tFiles, ikey internalKey, f func(level int
 		}
 
 		if level == 0 {
+			// 0层的文件可能互相覆盖，需要全部遍历
 			// Level-0 files may overlap each other. Find all files that
 			// overlap ukey.
 			for _, t := range tables {
 				if t.overlaps(v.s.icmp, ukey, ukey) {
+					//不需要继续迭代,直接返回
 					if !f(level, t) {
 						return
 					}
@@ -125,6 +138,7 @@ func (v *version) walkOverlapping(aux tFiles, ikey internalKey, f func(level int
 			if i := tables.searchMax(v.s.icmp, ikey); i < len(tables) {
 				t := tables[i]
 				if v.s.icmp.uCompare(ukey, t.imin.ukey()) >= 0 {
+					//找到，不需要继续迭代
 					if !f(level, t) {
 						return
 					}
@@ -132,12 +146,22 @@ func (v *version) walkOverlapping(aux tFiles, ikey internalKey, f func(level int
 			}
 		}
 
+		//for循环内部，对于0层，如果存在一个或者多个key则认为已经找到，调用lf逻辑
 		if lf != nil && !lf(level) {
 			return
 		}
 	}
 }
 
+/*
+从SSTable读取key
+noValue: 用于标记是否需要返回值
+
+返回值：
+value : 值
+tcomp :
+err :
+ */
 func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue bool) (value []byte, tcomp bool, err error) {
 	if v.closing {
 		return nil, false, ErrClosed
@@ -151,10 +175,11 @@ func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue
 		tseek bool
 
 		// Level-0.
+		// level-0的key可能会overlap，这里保存一些level0之前的信息
 		zfound bool
-		zseq   uint64
-		zkt    keyType
-		zval   []byte
+		zseq   uint64  //保存seq最新的那个
+		zkt    keyType //对应的keyType
+		zval   []byte //对应的value
 	)
 
 	err = ErrNotFound
@@ -174,12 +199,14 @@ func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue
 			fikey, fval []byte
 			ferr        error
 		)
+		//是否返回value
 		if noValue {
 			fikey, ferr = v.s.tops.findKey(t, ikey, ro)
 		} else {
 			fikey, fval, ferr = v.s.tops.find(t, ikey, ro)
 		}
 
+		//出现错误，返回
 		switch ferr {
 		case nil:
 		case ErrNotFound:
@@ -189,9 +216,14 @@ func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue
 			return false
 		}
 
+		//fukey: 从文件中找到的第一个大于等于ukey的
+		//如果sstable里的fukey与要查找的ikey里的ukey相同，但是ikey里的seq number是当前的sequence number，比sstable里的seq要大
+		//这样不会导致文件里的ikey小于fikey吗？
+		//ANSWER： internalKey比较时，sequence number更小的那个值更大
 		if fukey, fseq, fkt, fkerr := parseInternalKey(fikey); fkerr == nil {
 			if v.s.icmp.uCompare(ukey, fukey) == 0 {
 				// Level <= 0 may overlaps each-other.
+				// 如果是0层，找到这个key也不一定是最新的，保存信息，继续遍历其他文件
 				if level <= 0 {
 					if fseq >= zseq {
 						zfound = true
@@ -208,15 +240,18 @@ func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue
 					default:
 						panic("leveldb: invalid internalKey type")
 					}
+					//return false说明已经找到key， 不需要继续迭代了
 					return false
 				}
 			}
 		} else {
+			//发生了错误，也不再继续迭代
 			err = fkerr
 			return false
 		}
 
 		return true
+		//lf参数，针对0层的情况
 	}, func(level int) bool {
 		if zfound {
 			switch zkt {
@@ -227,6 +262,7 @@ func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue
 			default:
 				panic("leveldb: invalid internalKey type")
 			}
+			//如果找到，不需要继续遍历。
 			return false
 		}
 
@@ -236,10 +272,11 @@ func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue
 	if tseek && tset.table.consumeSeek() <= 0 {
 		tcomp = atomic.CompareAndSwapPointer(&v.cSeek, nil, unsafe.Pointer(tset))
 	}
-
 	return
 }
 
+//抽样读取
+//没看明白
 func (v *version) sampleSeek(ikey internalKey) (tcomp bool) {
 	var tset *tSet
 
@@ -257,6 +294,9 @@ func (v *version) sampleSeek(ikey internalKey) (tcomp bool) {
 	return
 }
 
+/*
+根据version里的sstable返回迭代器
+ */
 func (v *version) getIterators(slice *util.Range, ro *opt.ReadOptions) (its []iterator.Iterator) {
 	strict := opt.GetStrict(v.s.o.Options, ro, opt.StrictReader)
 	for level, tables := range v.levels {
@@ -277,6 +317,7 @@ func (v *version) newStaging() *versionStaging {
 }
 
 // Spawn a new version based on this version.
+// 根据version v和变更记录产生一个新的version
 func (v *version) spawn(r *sessionRecord, trivial bool) *version {
 	staging := v.newStaging()
 	staging.commit(r)
@@ -352,6 +393,7 @@ func (v *version) pickMemdbLevel(umin, umax []byte, maxLevel int) (level int) {
 	return
 }
 
+// 计算分数
 func (v *version) computeCompaction() {
 	// Precomputed best level for next compaction
 	bestLevel := int(-1)
@@ -399,10 +441,12 @@ func (v *version) computeCompaction() {
 	v.s.logf("version@stat F·%v S·%s%v Sc·%v", statFiles, shortenb(int(statTotSize)), statSizes, statScore)
 }
 
+//是否需要压缩
 func (v *version) needCompaction() bool {
 	return v.cScore >= 1 || atomic.LoadPointer(&v.cSeek) != nil
 }
 
+//
 type tablesScratch struct {
 	added   map[int64]atRecord
 	deleted map[int64]struct{}
@@ -410,9 +454,11 @@ type tablesScratch struct {
 
 type versionStaging struct {
 	base   *version
+	//每个level的 添加、删除信息
 	levels []tablesScratch
 }
 
+//获取第level层的scratch信息
 func (p *versionStaging) getScratch(level int) *tablesScratch {
 	if level >= len(p.levels) {
 		newLevels := make([]tablesScratch, level+1)
@@ -424,6 +470,8 @@ func (p *versionStaging) getScratch(level int) *tablesScratch {
 
 func (p *versionStaging) commit(r *sessionRecord) {
 	// Deleted tables.
+	//处理删除的文件信息:1.标记文件被删除  2.从文件添加集合中删除
+	//r 是每一层删除的文件
 	for _, r := range r.deletedTables {
 		scratch := p.getScratch(r.level)
 		if r.level < len(p.base.levels) && len(p.base.levels[r.level]) > 0 {
@@ -450,6 +498,9 @@ func (p *versionStaging) commit(r *sessionRecord) {
 	}
 }
 
+/*
+
+ */
 func (p *versionStaging) finish(trivial bool) *version {
 	// Build new version.
 	nv := newVersion(p.base.s)

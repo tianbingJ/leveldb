@@ -148,9 +148,16 @@ func (db *DB) flush(n int) (mdb *memDB, mdbFree int, err error) {
 }
 
 
+/*
+写合并的结构
+ */
 type writeMerge struct {
+	//是否同步写磁盘
 	sync       bool
+	//批次信息
 	batch      *Batch
+
+	//写单条数据用到如下信息
 	keyType    keyType
 	key, value []byte
 }
@@ -162,7 +169,7 @@ func (db *DB) unlockWrite(overflow bool, merged int, err error) {
 	for i := 0; i < merged; i++ {
 		db.writeAckC <- err  //通知写ack， err != nil表示写失败
 	}
-	//溢出，这里需要在看
+	//溢出时最后一个的写入操作没有被merge，写入的goroutine依然在等待，这里通知false，进而它会获取锁?
 	if overflow {
 		// Pass lock to the next write (that failed to merge).
 		db.writeMergedC <- false
@@ -211,25 +218,32 @@ func (db *DB) writeLocked(batch, ourBatch *Batch, merge, sync bool) error {
 			mergeLimit = mergeCap
 		}
 
+		//overflow时，最后一条消息没有merge进去，写入的goroutine在外面等待通知, 在这个方法里会通知unlockWrite()
+		//merge成功时，每个goroutine都收到了 write merge 的ack。
 	merge:
 		for mergeLimit > 0 {
 			select {
 			case incoming := <-db.writeMergeC:
+				//合并批次
 				if incoming.batch != nil {
 					// Merge batch.
+					// 如果超出了限制，不再继续合并
 					if incoming.batch.internalLen > mergeLimit {
 						overflow = true
+						//跳出merge标记的循环
 						break merge
 					}
 					batches = append(batches, incoming.batch)
 					mergeLimit -= incoming.batch.internalLen
 				} else {
 					// Merge put.
+					// 合并单条记录
 					internalLen := len(incoming.key) + len(incoming.value) + 8
 					if internalLen > mergeLimit {
 						overflow = true
 						break merge
 					}
+					// 单条记录，创建一条空的batch处理
 					if ourBatch == nil {
 						ourBatch = db.batchPool.Get().(*Batch)
 						ourBatch.Reset()
@@ -242,7 +256,7 @@ func (db *DB) writeLocked(batch, ourBatch *Batch, merge, sync bool) error {
 				}
 				sync = sync || incoming.sync
 				merged++
-				db.writeMergedC <- true
+				db.writeMergedC <- true //合并ack
 
 			default:
 				break merge
@@ -251,6 +265,7 @@ func (db *DB) writeLocked(batch, ourBatch *Batch, merge, sync bool) error {
 	}
 
 	// Release ourBatch if any.
+	// 不是立刻释放，这里有个defer
 	if ourBatch != nil {
 		defer db.batchPool.Put(ourBatch)
 	}
@@ -330,7 +345,8 @@ func (db *DB) Write(batch *Batch, wo *opt.WriteOptions) error {
 				return <-db.writeAckC
 			}
 		// Write is not merged, the write lock is handed to us. Continue.
-		//获取到锁, 后面进行
+		// merge没成功，db.writeMergedC返回false
+		//获取到锁, 后面进行, 是如何获取到所得？
 		case db.writeLockC <- struct{}{}:
 		// Compaction error.
 		case err := <-db.compPerErrC:
@@ -360,19 +376,23 @@ func (db *DB) putRec(kt keyType, key, value []byte, wo *opt.WriteOptions) error 
 		return err
 	}
 
+	//是否合并，默认是合并
 	merge := !wo.GetNoWriteMerge() && !db.s.o.GetNoWriteMerge()
+	//是否同步写磁盘,默认是不同步写磁盘
 	sync := wo.GetSync() && !db.s.o.GetNoSync()
 
 	// Acquire write lock.
 	if merge {
 		select {
 		case db.writeMergeC <- writeMerge{sync: sync, keyType: kt, key: key, value: value}:
-			if <-db.writeMergedC {
+			if <-db.writeMergedC { //如果merge失败， 怎么继续获取锁？
 				// Write is merged.
 				return <-db.writeAckC
 			}
-			// Write is not merged, the write lock is handed to us. Continue.
-		case db.writeLockC <- struct{}{}:
+		// Write is not merged, the write lock is handed to us. Continue.
+		// 锁是如何获取到得？锁怎么就传递过来了？
+		// TODO
+		case db.writeLockC <- struct{}{}: //获取写锁, write有一个缓冲区，如果写入成功，相当于获取到了锁
 			// Write lock acquired.
 		case err := <-db.compPerErrC:
 			// Compaction error.
@@ -394,6 +414,7 @@ func (db *DB) putRec(kt keyType, key, value []byte, wo *opt.WriteOptions) error 
 		}
 	}
 
+	// batch没有合并，获取写锁，当前线上
 	batch := db.batchPool.Get().(*Batch)
 	batch.Reset()
 	batch.appendRec(kt, key, value)

@@ -34,6 +34,9 @@ func (icmp *iComparer) Name() string {
 	return icmp.uName()
 }
 
+//两个internal key比较
+//1.ukey不相等，返回结果
+//2.ukey相同，则Sequence Number更小的那个key更大
 func (icmp *iComparer) Compare(a, b []byte) int {
 	x := icmp.uCompare(internalKey(a).ukey(), internalKey(b).ukey())
 	if x == 0 {

@@ -508,6 +508,7 @@ func (i *indexIter) Get() iterator.Iterator {
 }
 
 // Reader is a table reader.
+// Table Reader
 type Reader struct {
 	mu     sync.RWMutex
 	fd     storage.FileDesc

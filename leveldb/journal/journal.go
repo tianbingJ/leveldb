@@ -485,6 +485,7 @@ func (w *Writer) Reset(writer io.Writer) (err error) {
 
 // Next returns a writer for the next journal. The writer returned becomes stale
 // after the next Close, Flush or Next call, and should no longer be used.
+//
 func (w *Writer) Next() (io.Writer, error) {
 	w.seq++
 	if w.err != nil {
