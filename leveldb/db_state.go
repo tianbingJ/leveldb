@@ -202,6 +202,7 @@ func (db *DB) getFrozenMem() *memDB {
 }
 
 // Drop frozen memdb; assume that frozen memdb isn't nil.
+// 直接丢弃frozen memdb
 func (db *DB) dropFrozenMem() {
 	db.memMu.Lock()
 	if err := db.s.stor.Remove(db.frozenJournalFd); err != nil {

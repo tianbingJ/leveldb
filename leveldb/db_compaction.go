@@ -37,9 +37,9 @@ func (p *cStat) get() (duration time.Duration, read, write int64) {
 }
 
 type cStatStaging struct {
-	start    time.Time
-	duration time.Duration
-	on       bool
+	start    time.Time    //开始时间
+	duration time.Duration  //统计耗时
+	on       bool  //是否处于计时中
 	read     int64
 	write    int64
 }
@@ -276,7 +276,8 @@ func (db *DB) compactionCommit(name string, rec *sessionRecord) {
 }
 
 /*
-内存压缩
+内存压实, 收到mem压实指令后，开始执行这个操作
+Minor Compaction把memdb持久化在磁盘上
  */
 func (db *DB) memCompaction() {
 	mdb := db.getFrozenMem()
@@ -288,6 +289,7 @@ func (db *DB) memCompaction() {
 	db.logf("memdb@flush N·%d S·%s", mdb.Len(), shortenb(mdb.Size()))
 
 	// Don't compact empty memdb.
+	// frozen db大下是0，不压实空的memdb, 直接丢弃
 	if mdb.Len() == 0 {
 		db.logf("memdb@flush skipping")
 		// drop frozen memdb
@@ -295,6 +297,7 @@ func (db *DB) memCompaction() {
 		return
 	}
 
+	// Minor Compaction时效性更好，暂停Major Compaction
 	// Pause table compaction.
 	resumeC := make(chan struct{})
 	select {
@@ -307,15 +310,17 @@ func (db *DB) memCompaction() {
 	}
 
 	var (
+		//变更记录
 		rec        = &sessionRecord{}
 		stats      = &cStatStaging{}
 		flushLevel int
 	)
 
 	// Generate tables.
+	// memdb@flush
 	db.compactionTransactFunc("memdb@flush", func(cnt *compactionTransactCounter) (err error) {
 		stats.startTimer()
-		//
+		//压实操作
 		flushLevel, err = db.s.flushMemdb(rec, mdb.DB, db.memdbMaxLevel)
 		stats.stopTimer()
 		return
@@ -361,6 +366,7 @@ func (db *DB) memCompaction() {
 	}
 
 	// Trigger table compaction.
+	// 触发sstable 压实
 	db.compTrigger(db.tcompCmdC)
 }
 
@@ -667,6 +673,8 @@ func (db *DB) tableNeedCompaction() bool {
 }
 
 // resumeWrite returns an indicator whether we should resume write operation if enough level0 files are compacted.
+// 是否恢复写操作
+// 如果0层文件 < 12可以恢复write写操作，否则写操作被暂停
 func (db *DB) resumeWrite() bool {
 	v := db.s.version()
 	defer v.release()
@@ -676,6 +684,7 @@ func (db *DB) resumeWrite() bool {
 	return false
 }
 
+//暂停压实
 func (db *DB) pauseCompaction(ch chan<- struct{}) {
 	select {
 	case ch <- struct{}{}:
@@ -688,11 +697,13 @@ type cCmd interface {
 	ack(err error)
 }
 
+// 非空的ackC代表他是一个等待命令?
 type cAuto struct {
 	// Note for table compaction, an non-empty ackC represents it's a compaction waiting command.
 	ackC chan<- error
 }
 
+// 回传确认
 func (r cAuto) ack(err error) {
 	if r.ackC != nil {
 		defer func() {
@@ -718,6 +729,7 @@ func (r cRange) ack(err error) {
 }
 
 // This will trigger auto compaction but will not wait for it.
+// 触发压实，但不会block调用方
 func (db *DB) compTrigger(compC chan<- cCmd) {
 	select {
 	case compC <- cAuto{}:
@@ -729,6 +741,7 @@ func (db *DB) compTrigger(compC chan<- cCmd) {
 // 出发compaction命令，并等待压缩返回。
 // 改方法执行完成后，不应该存在frozen mem db
 func (db *DB) compTriggerWait(compC chan<- cCmd) (err error) {
+	//接受结果的通道
 	ch := make(chan error)
 	defer close(ch)
 	// Send cmd.
@@ -742,7 +755,7 @@ func (db *DB) compTriggerWait(compC chan<- cCmd) (err error) {
 	}
 	// Wait cmd.
 	select {
-	case err = <-ch:
+	case err = <-ch: //同步等待结果
 	case err = <-db.compErrC:
 	case <-db.closeC:
 		return ErrClosed
@@ -772,6 +785,7 @@ func (db *DB) compTriggerRange(compC chan<- cCmd, level int, min, max []byte) (e
 	return err
 }
 
+//内存压实goroutine
 func (db *DB) mCompaction() {
 	var x cCmd
 
@@ -789,10 +803,12 @@ func (db *DB) mCompaction() {
 
 	for {
 		select {
+		//收到了内存压实命令
 		case x = <-db.mcompCmdC:
 			switch x.(type) {
 			case cAuto:
 				db.memCompaction()
+				//回传确认，压实成功
 				x.ack(nil)
 				x = nil
 			default:
@@ -804,6 +820,7 @@ func (db *DB) mCompaction() {
 	}
 }
 
+//openDB的时候会启动compaction goroutine
 func (db *DB) tCompaction() {
 	var (
 		x     cCmd
@@ -827,6 +844,7 @@ func (db *DB) tCompaction() {
 	}()
 
 	for {
+		//存在score > 1的层
 		if db.tableNeedCompaction() {
 			select {
 			case x = <-db.tcompCmdC:

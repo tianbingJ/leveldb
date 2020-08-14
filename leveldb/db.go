@@ -79,12 +79,12 @@ type DB struct {
 
 	// Compaction. 锁
 	compCommitLk     sync.Mutex
-	//TB:table compaction chan
+	//TB:table compaction chan, 压缩命令
 	tcompCmdC        chan cCmd
-	//传递的是channal
+	//传递的是channal, 暂停table 压实，通道用于回传确认
 	tcompPauseC      chan chan<- struct{}
 
-	//内存压缩channel
+	//内存压缩channel,memdb
 	mcompCmdC        chan cCmd
 	compErrC         chan error
 	compPerErrC      chan error

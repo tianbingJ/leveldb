@@ -39,6 +39,7 @@ func (db *DB) writeJournal(batches []*Batch, seq uint64, sync bool) error {
 /*
 	当前memdb变成frozen mem，分配新的journal
 	当前journal fd变成frozen journal fd
+	wait: 是否等待压实返回
  */
 func (db *DB) rotateMem(n int, wait bool) (mem *memDB, err error) {
 	retryLimit := 3
@@ -63,9 +64,11 @@ retry:
 	}
 
 	// Schedule memdb compaction.
+	// 同步等待
 	if wait {
 		err = db.compTriggerWait(db.mcompCmdC)
 	} else {
+		// 不等待结果
 		db.compTrigger(db.mcompCmdC)
 	}
 	return

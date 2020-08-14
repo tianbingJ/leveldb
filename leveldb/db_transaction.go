@@ -281,6 +281,7 @@ func (db *DB) waitCompaction() error {
 	return nil
 }
 
+
 // OpenTransaction opens an atomic DB transaction. Only one transaction can be
 // opened at a time. Subsequent call to Write and OpenTransaction will be blocked
 // until in-flight transaction is committed or discarded.

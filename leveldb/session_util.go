@@ -321,6 +321,7 @@ func (s *session) markFileNum(num int64) {
 }
 
 // Allocate a file number.
+// 生成一个文件序号
 func (s *session) allocFileNum() int64 {
 	return atomic.AddInt64(&s.stNextFileNum, 1) - 1
 }

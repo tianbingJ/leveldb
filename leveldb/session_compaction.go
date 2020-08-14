@@ -29,6 +29,7 @@ func (s *session) pickMemdbLevel(umin, umax []byte, maxLevel int) int {
 
 /*
 刷新memdb
+根据memdb生成0层文件
 */
 func (s *session) flushMemdb(rec *sessionRecord, mdb *memdb.DB, maxLevel int) (int, error) {
 	// Create sorted table.

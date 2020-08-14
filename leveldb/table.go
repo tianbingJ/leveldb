@@ -408,13 +408,16 @@ func (t *tOps) create() (*tWriter, error) {
 }
 
 // Builds table from src iterator.
+// 从内存生成tFile
 func (t *tOps) createFrom(src iterator.Iterator) (f *tFile, n int, err error) {
+	//创建tFile,并返回tableWriter
 	w, err := t.create()
 	if err != nil {
 		return
 	}
 
 	defer func() {
+		//生成文件错误，删除文件
 		if err != nil {
 			w.drop()
 		}
@@ -584,12 +587,12 @@ func newTableOps(s *session) *tOps {
 // and added key range.
 type tWriter struct {
 	t *tOps
-
-	fd storage.FileDesc
-	w  storage.Writer
+	fd storage.FileDesc  //文件描述符
+	w  storage.Writer    // 文件系统writer
 	tw *table.Writer
 
 	//first last是什么含义？
+	//first last表示sstable的最小key和最大key
 	first, last []byte
 }
 

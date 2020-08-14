@@ -142,7 +142,7 @@ NOTE: All fixed-length integer are little-endian.
 */
 
 const (
-	blockTrailerLen = 5
+	blockTrailerLen = 5   //data block offset 1字节的compression type 加checksum
 	footerLen       = 48
 
 	magic = "\x57\xfb\x80\x8b\x24\x75\x47\xdb"
@@ -154,9 +154,13 @@ const (
 
 	// Generate new filter every 2KB of data
 	filterBaseLg = 11
+	//每2KB的数据使用生成一个布隆过滤器
 	filterBase   = 1 << filterBaseLg
 )
 
+//索引信息
+//offset: 偏移信息
+//length: block的长度
 type blockHandle struct {
 	offset, length uint64
 }

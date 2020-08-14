@@ -92,6 +92,7 @@ func (b *Buffer) grow(n int) int {
 // Alloc allocs n bytes of slice from the buffer, growing the buffer as
 // needed. If n is negative, Alloc will panic.
 // If the buffer can't grow it will panic with bytes.ErrTooLarge.
+// 分配更大的n个字节
 func (b *Buffer) Alloc(n int) []byte {
 	if n < 0 {
 		panic("leveldb/util.Buffer.Alloc: negative count")

@@ -87,7 +87,7 @@ func (g *bloomFilterGenerator) Add(key []byte) {
 	g.keyHashes = append(g.keyHashes, bloomHash(key))
 }
 
-// 根据
+// 根据key把过滤器data追加到buffer中
 func (g *bloomFilterGenerator) Generate(b Buffer) {
 	// Compute bloom filter size (in both bits and bytes)
 	// 布隆过滤器的位数， n = bitsPerKey
