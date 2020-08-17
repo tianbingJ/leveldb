@@ -136,6 +136,7 @@ func (v *version) walkOverlapping(aux tFiles, ikey internalKey, f func(level int
 				}
 			}
 		} else {
+			//对每一层调用二分查找,定位到tfile，然后在tFile中查找
 			if i := tables.searchMax(v.s.icmp, ikey); i < len(tables) {
 				t := tables[i]
 				if v.s.icmp.uCompare(ukey, t.imin.ukey()) >= 0 {
@@ -187,6 +188,7 @@ func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue
 
 	// Since entries never hop across level, finding key/value
 	// in smaller level make later levels irrelevant.
+	// entry不会在多个level出现，
 	v.walkOverlapping(aux, ikey, func(level int, t *tFile) bool {
 		if sampleSeeks && level >= 0 && !tseek {
 			if tset == nil {
@@ -218,6 +220,7 @@ func (v *version) get(aux tFiles, ikey internalKey, ro *opt.ReadOptions, noValue
 		}
 
 		//fukey: 从文件中找到的第一个大于等于ukey的
+		//fkt: key type
 		//如果sstable里的fukey与要查找的ikey里的ukey相同，但是ikey里的seq number是当前的sequence number，比sstable里的seq要大
 		//这样不会导致文件里的ikey小于fikey吗？
 		//ANSWER： internalKey比较时，sequence number更小的那个值更大

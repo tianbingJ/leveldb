@@ -54,15 +54,21 @@ func max(x, y int) int {
 }
 
 type block struct {
+	//Buffer池，获取buffer时首先尝试从Pool中获取，获取不到会分配新的buffer
 	bpool          *util.BufferPool
-	bh             blockHandle
+	bh             blockHandle  //offset and length
 	data           []byte
-	restartsLen    int
-	restartsOffset int
+	restartsLen    int    //block中restartPoints的个数
+	restartsOffset int    //block中restart point的offset
 }
 
+//在block中找到第一个大于等于key的restart point
+//rstart, rlimit定位查找的区间
 func (b *block) seek(cmp comparer.Comparer, rstart, rlimit int, key []byte) (index, offset int, err error) {
-	index = sort.Search(b.restartsLen-rstart-(b.restartsLen-rlimit), func(i int) bool {
+	//sort.Search:二分查找，Search [0, n)，返回下标i使得f(i) == true.不变量：f(i - 1) = false , f(j) = true
+	//b.restartsLen - rstart - (b.restartsLen - rlimit) = rlimit - rstart
+	index = sort.Search(b.restartsLen - rstart - (b.restartsLen - rlimit), func(i int) bool {
+		//区间内地i个restart point的key value
 		offset := int(binary.LittleEndian.Uint32(b.data[b.restartsOffset+4*(rstart+i):]))
 		offset++                                    // shared always zero, since this is a restart point
 		v1, n1 := binary.Uvarint(b.data[offset:])   // key length
@@ -119,13 +125,14 @@ func (b *block) Release() {
 type dir int
 
 const (
-	dirReleased dir = iota - 1
-	dirSOI
+	dirReleased dir = iota - 1  //
+	dirSOI       //
 	dirEOI
-	dirBackward
-	dirForward
+	dirBackward  //向后迭代
+	dirForward   //向前迭代
 )
 
+//block的迭代器
 type blockIter struct {
 	tr            *Reader
 	block         *block
@@ -134,6 +141,7 @@ type blockIter struct {
 	key, value    []byte
 	offset        int
 	// Previous offset, only filled by Next.
+	// 前一个entry的信息
 	prevOffset   int
 	prevNode     []int
 	prevKeys     []byte
@@ -141,16 +149,18 @@ type blockIter struct {
 	// Iterator direction.
 	dir dir
 	// Restart index slice range.
+	// restart points的下标区间
 	riStart int
 	riLimit int
 	// Offset slice range.
 	offsetStart     int
 	offsetRealStart int
-	offsetLimit     int
+	offsetLimit     int  //restart points的偏移量
 	// Error.
 	err error
 }
 
+//设置error
 func (i *blockIter) sErr(err error) {
 	i.err = err
 	i.key = nil
@@ -159,6 +169,7 @@ func (i *blockIter) sErr(err error) {
 	i.prevKeys = nil
 }
 
+//重置
 func (i *blockIter) reset() {
 	if i.dir == dirBackward {
 		i.prevNode = i.prevNode[:0]
@@ -171,6 +182,8 @@ func (i *blockIter) reset() {
 	i.value = nil
 }
 
+//是否是第一个
+//
 func (i *blockIter) isFirst() bool {
 	switch i.dir {
 	case dirForward:
@@ -181,6 +194,7 @@ func (i *blockIter) isFirst() bool {
 	return false
 }
 
+//是否是最后一个
 func (i *blockIter) isLast() bool {
 	switch i.dir {
 	case dirForward, dirBackward:
@@ -221,6 +235,7 @@ func (i *blockIter) Last() bool {
 	return i.Prev()
 }
 
+//block中是否存在大于等于key的key
 func (i *blockIter) Seek(key []byte) bool {
 	if i.err != nil {
 		return false
@@ -229,6 +244,7 @@ func (i *blockIter) Seek(key []byte) bool {
 		return false
 	}
 
+	//返回index，offset，err
 	ri, offset, err := i.block.seek(i.tr.cmp, i.riStart, i.riLimit, key)
 	if err != nil {
 		i.sErr(err)
@@ -513,7 +529,7 @@ type Reader struct {
 	mu     sync.RWMutex
 	fd     storage.FileDesc
 	reader io.ReaderAt
-	cache  *cache.NamespaceGetter
+	cache  *cache.NamespaceGetter //index的cache
 	err    error
 	bpool  *util.BufferPool
 	// Options
@@ -522,7 +538,7 @@ type Reader struct {
 	filter         filter.Filter
 	verifyChecksum bool
 
-	dataEnd                   int64
+	dataEnd                   int64 //Data的结束位移
 	metaBH, indexBH, filterBH blockHandle
 	indexBlock                *block
 	filterBlock               *filterBlock
@@ -560,14 +576,18 @@ func (r *Reader) fixErrCorruptedBH(bh blockHandle, err error) error {
 	return err
 }
 
+//读取一个Block
 func (r *Reader) readRawBlock(bh blockHandle, verifyChecksum bool) ([]byte, error) {
+	//每个block都有一个字节的压缩类型和四个字节CRC码
 	data := r.bpool.Get(int(bh.length + blockTrailerLen))
+	//ReatAt读取len(data)长度的数据,数据长度不足时，会返回err
 	if _, err := r.reader.ReadAt(data, int64(bh.offset)); err != nil && err != io.EOF {
 		return nil, err
 	}
 
 	if verifyChecksum {
 		n := bh.length + 1
+		//n是block中checksum的位移
 		checksum0 := binary.LittleEndian.Uint32(data[n:])
 		checksum1 := util.NewCRC(data[:n]).Value()
 		if checksum0 != checksum1 {
@@ -577,9 +597,11 @@ func (r *Reader) readRawBlock(bh blockHandle, verifyChecksum bool) ([]byte, erro
 	}
 
 	switch data[bh.length] {
+	//没有使用压缩
 	case blockTypeNoCompression:
 		data = data[:bh.length]
 	case blockTypeSnappyCompression:
+		//使用了压缩，解压数据
 		decLen, err := snappy.DecodedLen(data[:bh.length])
 		if err != nil {
 			r.bpool.Put(data)
@@ -600,6 +622,7 @@ func (r *Reader) readRawBlock(bh blockHandle, verifyChecksum bool) ([]byte, erro
 	return data, nil
 }
 
+//读取一个block
 func (r *Reader) readBlock(bh blockHandle, verifyChecksum bool) (*block, error) {
 	data, err := r.readRawBlock(bh, verifyChecksum)
 	if err != nil {
@@ -722,6 +745,7 @@ func (r *Reader) getFilterBlock(fillCache bool) (*filterBlock, util.Releaser, er
 	return r.filterBlock, util.NoopReleaser{}, nil
 }
 
+//根据block返回迭代器
 func (r *Reader) newBlockIter(b *block, bReleaser util.Releaser, slice *util.Range, inclLimit bool) *blockIter {
 	bi := &blockIter{
 		tr:            r,
@@ -736,6 +760,7 @@ func (r *Reader) newBlockIter(b *block, bReleaser util.Releaser, slice *util.Ran
 		offsetRealStart: 0,
 		offsetLimit:     b.restartsOffset,
 	}
+	//slice限定了迭代器区间
 	if slice != nil {
 		if slice.Start != nil {
 			if bi.Seek(slice.Start) {
@@ -1023,6 +1048,8 @@ func (r *Reader) Release() {
 // The fi, cache and bpool is optional and can be nil.
 //
 // The returned table reader instance is safe for concurrent use.
+// 创建一个Table Reader
+// size:文件的大小
 func NewReader(f io.ReaderAt, size int64, fd storage.FileDesc, cache *cache.NamespaceGetter, bpool *util.BufferPool, o *opt.Options) (*Reader, error) {
 	if f == nil {
 		return nil, errors.New("leveldb/table: nil file")
@@ -1043,11 +1070,13 @@ func NewReader(f io.ReaderAt, size int64, fd storage.FileDesc, cache *cache.Name
 		return r, nil
 	}
 
+	//footer的位置， footer中获取filter index、data index的位移
 	footerPos := size - footerLen
 	var footer [footerLen]byte
 	if _, err := r.reader.ReadAt(footer[:], footerPos); err != nil && err != io.EOF {
 		return nil, err
 	}
+	//验证magic字符串
 	if string(footer[footerLen-len(magic):footerLen]) != magic {
 		r.err = r.newErrCorrupted(footerPos, footerLen, "table-footer", "bad magic number")
 		return r, nil
@@ -1055,6 +1084,7 @@ func NewReader(f io.ReaderAt, size int64, fd storage.FileDesc, cache *cache.Name
 
 	var n int
 	// Decode the metaindex block handle.
+	// 过滤器索引在sstable中的offset和length， n是两者加在一起的长度
 	r.metaBH, n = decodeBlockHandle(footer[:])
 	if n == 0 {
 		r.err = r.newErrCorrupted(footerPos, footerLen, "table-footer", "bad metaindex block handle")
@@ -1062,6 +1092,7 @@ func NewReader(f io.ReaderAt, size int64, fd storage.FileDesc, cache *cache.Name
 	}
 
 	// Decode the index block handle.
+	// Data索引在sstable中的offset和length
 	r.indexBH, n = decodeBlockHandle(footer[n:])
 	if n == 0 {
 		r.err = r.newErrCorrupted(footerPos, footerLen, "table-footer", "bad index block handle")
@@ -1069,6 +1100,7 @@ func NewReader(f io.ReaderAt, size int64, fd storage.FileDesc, cache *cache.Name
 	}
 
 	// Read metaindex block.
+	// 读取过滤器数据
 	metaBlock, err := r.readBlock(r.metaBH, true)
 	if err != nil {
 		if errors.IsCorrupted(err) {
@@ -1078,10 +1110,13 @@ func NewReader(f io.ReaderAt, size int64, fd storage.FileDesc, cache *cache.Name
 		return nil, err
 	}
 
+
 	// Set data end.
+	// data block的结束时meta index的起始偏移
 	r.dataEnd = int64(r.metaBH.offset)
 
 	// Read metaindex.
+	// meta index block内容是:key: "filter." + 过滤器名称， value:索引信息的blockHandle(offset + length)
 	metaIter := r.newBlockIter(metaBlock, nil, nil, true)
 	for metaIter.Next() {
 		key := string(metaIter.Key())
@@ -1106,6 +1141,7 @@ func NewReader(f io.ReaderAt, size int64, fd storage.FileDesc, cache *cache.Name
 			}
 			r.filterBH = filterBH
 			// Update data end.
+			// 存在过滤器的情况下，dataEnd更新为过滤器数据的起始offset(之前是索引信息的起始位置)
 			r.dataEnd = int64(filterBH.offset)
 			break
 		}
@@ -1135,6 +1171,5 @@ func NewReader(f io.ReaderAt, size int64, fd storage.FileDesc, cache *cache.Name
 			}
 		}
 	}
-
 	return r, nil
 }

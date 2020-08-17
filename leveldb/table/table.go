@@ -165,6 +165,7 @@ type blockHandle struct {
 	offset, length uint64
 }
 
+//读取offset和length
 func decodeBlockHandle(src []byte) (blockHandle, int) {
 	offset, n := binary.Uvarint(src)
 	length, m := binary.Uvarint(src[n:])

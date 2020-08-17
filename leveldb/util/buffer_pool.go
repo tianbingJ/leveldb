@@ -13,31 +13,35 @@ import (
 	"time"
 )
 
+//读缓冲
 type buffer struct {
 	b    []byte
 	miss int
 }
 
 // BufferPool is a 'buffer pool'.
+// BufferPool是一个缓冲的pool，重复利用buffer
 type BufferPool struct {
-	pool      [6]chan []byte
+	//每个pool是个chan
+	pool      [6]chan []byte  //pool的容量分别为 2， 2， 4，4， 2， 1
 	size      [5]uint32
 	sizeMiss  [5]uint32
 	sizeHalf  [5]uint32
-	baseline  [4]int
-	baseline0 int
+	baseline  [4]int   //baseline0 / 4, baseline0 / 2 , baseline0 * 2 , baseline0*4
+	baseline0 int   //缓存的基础线
 
 	mu     sync.RWMutex
 	closed bool
+	//有一个单位的缓冲区
 	closeC chan struct{}
 
-	get     uint32
+	get     uint32  //get的次数
 	put     uint32
 	half    uint32
 	less    uint32
 	equal   uint32
 	greater uint32
-	miss    uint32
+	miss    uint32 //miss的次数
 }
 
 func (p *BufferPool) poolNum(n int) int {
@@ -53,6 +57,7 @@ func (p *BufferPool) poolNum(n int) int {
 }
 
 // Get returns buffer with length of n.
+// 获取能够满足长度的buffer
 func (p *BufferPool) Get(n int) []byte {
 	if p == nil {
 		return make([]byte, n)
@@ -93,6 +98,7 @@ func (p *BufferPool) Get(n int) []byte {
 				atomic.AddUint32(&p.greater, 1)
 			}
 		default:
+			// miss + 1
 			atomic.AddUint32(&p.miss, 1)
 		}
 
@@ -199,6 +205,7 @@ func (p *BufferPool) String() string {
 		p.baseline0, p.size, p.sizeMiss, p.sizeHalf, p.get, p.put, p.half, p.less, p.equal, p.greater, p.miss)
 }
 
+//消费掉缓冲里的数据项
 func (p *BufferPool) drain() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()

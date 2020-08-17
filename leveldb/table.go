@@ -488,11 +488,13 @@ func (t *tOps) find(f *tFile, key []byte, ro *opt.ReadOptions) (rkey, rvalue []b
 		return nil, nil, err
 	}
 	defer ch.Release()
+	//value是table.Reader
 	return ch.Value().(*table.Reader).Find(key, true, ro)
 }
 
 // Finds key that is greater than or equal to the given key.
 //找到大于等于当前key的第一个key
+//从SSTable中读取指定的key
 func (t *tOps) findKey(f *tFile, key []byte, ro *opt.ReadOptions) (rkey []byte, err error) {
 	ch, err := t.open(f)
 	if err != nil {
